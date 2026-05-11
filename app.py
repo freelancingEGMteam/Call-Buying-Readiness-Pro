@@ -87,7 +87,58 @@ def get_options_scanner():
 
 df_scanner = get_options_scanner()
 
-# ====================== IMPROVED CALL/PUT DETECTION ======================
+# ====================== FOREX SWING SIGNALS ======================
+@st.cache_data(ttl=300)
+def get_forex_swing_signals():
+    pairs = ["EURUSD=X", "GBPUSD=X", "USDJPY=X", "AUDUSD=X", "USDCAD=X", "USDCHF=X", "NZDUSD=X"]
+    data = []
+    for pair in pairs:
+        try:
+            ticker = yf.Ticker(pair)
+            hist = ticker.history(period="90d")
+            if len(hist) < 30: continue
+            current_price = hist['Close'].iloc[-1]
+            ema200 = hist['Close'].ewm(span=200).mean().iloc[-1]
+            rsi = 100 - (100 / (1 + (hist['Close'].diff(1).clip(lower=0).ewm(span=14).mean() / 
+                                      hist['Close'].diff(1).clip(upper=0).abs().ewm(span=14).mean())))
+            rsi = rsi.iloc[-1]
+            
+            direction = "Bullish" if current_price > ema200 and rsi < 70 else "Bearish" if current_price < ema200 and rsi > 30 else "Neutral"
+            if abs(rsi - 50) <= 15: continue  # High Confidence only
+            
+            recent_high = hist['High'].rolling(20).max().iloc[-1]
+            recent_low = hist['Low'].rolling(20).min().iloc[-1]
+            
+            if direction == "Bullish":
+                entry = round(current_price, 4)
+                target1 = round(recent_high * 1.015, 4)
+                stop = round(recent_low * 0.985, 4)
+            else:
+                entry = round(current_price, 4)
+                target1 = round(recent_low * 0.985, 4)
+                stop = round(recent_high * 1.015, 4)
+            
+            rr = round((abs(target1 - entry) / abs(entry - stop)), 2) if abs(entry - stop) > 0 else 0.0
+            
+            data.append({
+                "Pair": pair.replace("=X", "").replace("USD", "/USD") if "USD" in pair else pair.replace("=X", ""),
+                "Direction": direction,
+                "Price": round(current_price, 4),
+                "RSI": round(rsi, 1),
+                "Entry": entry,
+                "Target 1": target1,
+                "Stop Loss": stop,
+                "R:R": rr,
+                "Confidence": "High"
+            })
+        except:
+            continue
+    df = pd.DataFrame(data)
+    if df.empty:
+        return df
+    return df.sort_values(by="R:R", ascending=False).reset_index(drop=True)
+
+# ====================== MANUAL X SIGNALS ======================
 @st.cache_data(ttl=86400)
 def get_x_signals():
     if not X_BEARER:
@@ -113,15 +164,13 @@ def get_x_signals():
                 dt_est = tweet.created_at - timedelta(hours=4)
                 time_est = dt_est.strftime("%b %d %H:%M") + " EST"
                 
-                # Ticker extraction
                 extracted = re.findall(r'\b([A-Z]{2,5})\b', text)
                 detected = [t for t in extracted if t in known_tickers]
                 ticker_display = detected[0] if detected else "Multiple"
                 
-                # Better Call/Put detection
                 text_lower = text.lower()
-                call_phrases = ["call sweep", "sweep call", "call block", "unusual call", "big call", "call buying", "buying calls", "call flow"]
-                put_phrases = ["put sweep", "sweep put", "put block", "unusual put", "big put", "put buying", "buying puts", "put flow"]
+                call_phrases = ["call sweep", "sweep call", "call block", "unusual call", "big call", "call buying", "buying calls"]
+                put_phrases = ["put sweep", "sweep put", "put block", "unusual put", "big put", "put buying", "buying puts"]
                 
                 has_call = any(phrase in text_lower for phrase in call_phrases)
                 has_put = any(phrase in text_lower for phrase in put_phrases)
@@ -161,13 +210,25 @@ df_filtered = df_scanner[df_scanner["Score"] >= min_score].copy()
 if show_strong_only:
     df_filtered = df_filtered[df_filtered["Readiness"].str.contains("Strong|Buy Call", regex=True)]
 
-tab1, tab4, tab5 = st.tabs(["📊 Scanner", "🔥 Manual X Signals", "🛎️ Telegram Alerts"])
+tab1, tab4, tab5, tab6 = st.tabs(["📊 Scanner", "🔥 Manual X Signals", "🛎️ Telegram Alerts", "🌍 Forex Swing Signals"])
 
 with tab1:
     st.subheader("Strong Buy Call Candidates (12–90 DTE + Call Premium ≤ $3.00)")
-    # (your scanner code with legend and table)
     with st.expander("📋 Column Legend"):
-        st.markdown("... (your legend) ...")
+        st.markdown("""
+        | Column              | Meaning |
+        |---------------------|---------|
+        | **Price**           | Current stock price |
+        | **52W_High**        | 52-week highest price |
+        | **Percent_From_High** | Distance below 52W high |
+        | **Score**           | Call-buying readiness score |
+        | **IV_Rank**         | Implied volatility rank |
+        | **DTE**             | Days to expiration |
+        | **Call_Premium**    | Price of call option |
+        | **Daily_Volume**    | Shares traded today |
+        | **Readiness**       | Strong Buy Call / Buy Call / Monitor |
+        | **Risk_1_Contract** | Approx. cost for 1 contract |
+        """)
     if df_filtered.empty:
         st.info("No stocks currently meet all criteria...")
     else:
@@ -201,5 +262,24 @@ with tab5:
         else:
             st.error("Telegram not configured")
 
+with tab6:
+    st.subheader("🌍 Forex Swing Signals — High Confidence Only")
+    forex_signals = get_forex_swing_signals()
+    if forex_signals.empty:
+        st.info("No High Confidence Forex swing setups at the moment.")
+    else:
+        st.dataframe(
+            forex_signals.style.background_gradient(subset=["R:R"], cmap="RdYlGn"),
+            column_config={
+                "Price": st.column_config.NumberColumn(format="%.4f"),
+                "Entry": st.column_config.NumberColumn(format="%.4f"),
+                "Target 1": st.column_config.NumberColumn(format="%.4f"),
+                "Stop Loss": st.column_config.NumberColumn(format="%.4f"),
+                "R:R": st.column_config.NumberColumn(format="%.2f"),
+            },
+            use_container_width=True,
+            height=500
+        )
+
 st.divider()
-st.caption("✅ Improved Call/Put detection + clean formatting")
+st.caption("✅ All tabs restored • Forex Swing Signals included")
