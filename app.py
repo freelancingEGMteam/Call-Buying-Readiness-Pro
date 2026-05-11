@@ -9,109 +9,128 @@ import requests
 st.set_page_config(page_title="Call Buying Pro", layout="wide", initial_sidebar_state="expanded")
 
 st.title("🚀 Call Buying Readiness Pro")
-st.caption("Live Prices • Manual X Options Flow • Telegram Alerts")
+st.caption("High-Volume • 15–40% from 52W High • Strong Companies Only")
 
 # ====================== SECRETS ======================
 X_BEARER = st.secrets.get("x", {}).get("bearer_token")
 TG_TOKEN = st.secrets.get("telegram", {}).get("bot_token")
 TG_CHAT_ID = st.secrets.get("telegram", {}).get("chat_id")
 
-# ====================== LIVE DATA ======================
-@st.cache_data(ttl=300)
-def get_live_data(tickers):
+# ====================== X FLOW WATCHLIST ======================
+x_watchlist = st.sidebar.multiselect(
+    "X Flow Watchlist (signals only)",
+    ["MSFT", "META", "NFLX", "LLY", "MU", "CVNA", "INTC", "TSLA", "NVDA", "AAPL"],
+    default=["MU", "CVNA", "NFLX", "TSLA", "META"]
+)
+
+# ====================== DYNAMIC SCANNER WITH ALL YOUR CRITERIA ======================
+@st.cache_data(ttl=600)
+def get_options_scanner():
     data = []
-    for ticker in tickers:
+    today = datetime.now().date()
+    
+    for ticker in ["MSFT","META","NFLX","LLY","MU","CVNA","INTC","TSLA","NVDA","AAPL","AMD","AMZN","GOOGL","SMCI","AVGO","CRM","ADBE","ORCL","NOW","PLTR","HOOD"]:
         try:
             stock = yf.Ticker(ticker)
             info = stock.info
+            
+            # 1. Volume ≥ 1 million
+            volume = info.get("regularMarketVolume") or info.get("volume") or 0
+            if volume < 1_000_000:
+                continue
+            
+            # 2. High-quality / strong company (market cap > $50B)
+            market_cap = info.get("marketCap") or 0
+            if market_cap < 50_000_000_000:
+                continue
+                
             price = info.get("regularMarketPrice") or info.get("currentPrice") or info.get("previousClose") or 0
-            if price > 0:
-                iv_rank_est = max(20, min(80, 100 - (price / max(info.get("fiftyTwoWeekHigh", price + 1), 1) * 50)))
-                score = round(4 + (80 - iv_rank_est) * 0.08, 1)
-                data.append({
-                    "Ticker": ticker, "Price": round(price, 2), "Score": score,
-                    "IV_Rank": int(iv_rank_est),
-                    "Readiness": "Strong Buy Call" if iv_rank_est < 45 else "Buy Call" if iv_rank_est < 65 else "Monitor",
-                    "Risk_1_Contract": int(price * 0.8)
-                })
+            if price == 0:
+                continue
+                
+            # 3. 15% to 40% below 52-week high
+            high_52w = info.get("fiftyTwoWeekHigh")
+            if not high_52w or high_52w == 0:
+                continue
+            percent_from_high = ((price / high_52w) - 1) * 100
+            if not (-40 <= percent_from_high <= -15):
+                continue
+            
+            # 4. Good call options (3-60 DTE + $3–$12 premium)
+            expirations = stock.options
+            suitable_call = False
+            best_premium = None
+            dte = None
+            for exp in expirations[:6]:
+                exp_date = datetime.strptime(exp, '%Y-%m-%d').date()
+                days = (exp_date - today).days
+                if 3 <= days <= 60:
+                    chain = stock.option_chain(exp)
+                    calls = chain.calls
+                    good_calls = calls[(calls['lastPrice'] >= 3.0) & (calls['lastPrice'] <= 12.0)]
+                    if not good_calls.empty:
+                        suitable_call = True
+                        best_premium = round(good_calls['lastPrice'].iloc[0], 2)
+                        dte = days
+                        break
+            if not suitable_call:
+                continue
+            
+            # Scoring
+            iv_rank_est = max(20, min(80, 100 - (price / high_52w * 50)))
+            score = round(4 + (80 - iv_rank_est) * 0.08 + (best_premium or 5) * 0.3, 1)
+            
+            readiness = "Strong Buy Call" if iv_rank_est < 45 else "Buy Call" if iv_rank_est < 65 else "Monitor"
+            
+            data.append({
+                "Ticker": ticker,
+                "Price": round(price, 2),
+                "52W_High": round(high_52w, 2),
+                "Percent_From_High": f"{percent_from_high:.1f}%",
+                "Score": score,
+                "IV_Rank": int(iv_rank_est),
+                "DTE": dte,
+                "Call_Premium": best_premium,
+                "Daily_Volume": f"{int(volume):,}",
+                "Readiness": readiness,
+                "Risk_1_Contract": int(price * 0.8)
+            })
         except:
-            pass
+            continue
+    
     df = pd.DataFrame(data)
-    if len(df) < 2:
-        st.warning("⚠️ Live prices temporarily unavailable — showing sample data")
-        df = pd.DataFrame([
-            {"Ticker": "NFLX", "Price": 87.4, "Score": 8.6, "IV_Rank": 26, "Readiness": "Strong Buy Call", "Risk_1_Contract": 450},
-            {"Ticker": "MU",   "Price": 798.5, "Score": 8.7, "IV_Rank": 42, "Readiness": "Strong Buy Call", "Risk_1_Contract": 1250},
-            {"Ticker": "CVNA", "Price": 287.2, "Score": 8.1, "IV_Rank": 35, "Readiness": "Strong Buy Call", "Risk_1_Contract": 850},
-            {"Ticker": "META", "Price": 609.8, "Score": 7.6, "IV_Rank": 31, "Readiness": "Buy Call", "Risk_1_Contract": 1800},
-        ])
+    if not df.empty:
+        df = df.sort_values(by="Score", ascending=False).reset_index(drop=True)
     return df
 
-watchlist = st.sidebar.multiselect("Permanent Watchlist", 
-    ["MSFT", "META", "NFLX", "LLY", "CVX", "XOM", "MU", "CVNA", "INTC", "TSLA", "NVDA", "AAPL"],
-    default=["MSFT", "META", "NFLX", "MU", "CVNA"])
+df_scanner = get_options_scanner()
 
-df = get_live_data(watchlist)
-
-# ====================== X SIGNALS WITH REAL ACCOUNT NAMES ======================
+# ====================== MANUAL X SIGNALS (unchanged) ======================
 @st.cache_data(ttl=86400)
 def get_x_signals():
     if not X_BEARER:
         return pd.DataFrame([{"Ticker": "-", "Signal": "Add X Bearer Token in Secrets", "Source": "X API", "Time": "Now"}])
-    
     try:
         client = tweepy.Client(bearer_token=X_BEARER)
+        tickers_str = " OR ".join(x_watchlist)
         query = (
             '("call sweep" OR "sweep call" OR "call block" OR "unusual call" OR '
-            '"options flow" OR "big call" OR "0DTE call" OR "unusual options" OR '
-            '"call buying" OR "flow alert") '
-            '(MU OR CVNA OR NFLX OR TSLA OR META OR MSFT OR INTC OR NVDA OR AAPL) '
-            '-is:retweet lang:en'
+            '"options flow" OR "big call" OR "0DTE call" OR "unusual options" OR "call buying") '
+            f'({tickers_str}) -is:retweet lang:en'
         )
-        
-        tweets = client.search_recent_tweets(
-            query=query,
-            max_results=20,
-            tweet_fields=["created_at"],
-            expansions=["author_id"],
-            user_fields=["username"]
-        )
-        
+        tweets = client.search_recent_tweets(query=query, max_results=20, tweet_fields=["created_at"], expansions=["author_id"], user_fields=["username"])
         signals = []
         if tweets.data:
-            # Create username lookup
             users = {u.id: u.username for u in tweets.includes.get("users", [])}
-            
             for tweet in tweets.data[:12]:
                 text = tweet.text
-                author_id = tweet.author_id
-                username = users.get(author_id, "unknown")
-                
-                # UTC → EST
+                username = users.get(tweet.author_id, "unknown")
                 dt_est = tweet.created_at - timedelta(hours=4)
                 time_est = dt_est.strftime("%b %d %H:%M") + " EST"
-                
-                signals.append({
-                    "Ticker": "Multiple",
-                    "Signal": text,
-                    "Source": f"@{username}",
-                    "Time": time_est
-                })
-        
-        return pd.DataFrame(signals) if signals else pd.DataFrame([{"Ticker": "-", "Signal": "No strong options flow found recently", "Source": "X API", "Time": "Now"}])
-    except Exception as e:
-        return pd.DataFrame([{"Ticker": "-", "Signal": f"Error: {str(e)[:100]}", "Source": "X API", "Time": "Now"}])
-
-# ====================== TELEGRAM ======================
-def send_telegram_alert(message):
-    if TG_TOKEN and TG_CHAT_ID:
-        try:
-            requests.post(f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage", 
-                          json={"chat_id": TG_CHAT_ID, "text": message, "parse_mode": "HTML"})
-            return True
-        except:
-            return False
-    return False
+                signals.append({"Ticker": "Multiple", "Signal": text, "Source": f"@{username}", "Time": time_est})
+        return pd.DataFrame(signals) if signals else pd.DataFrame([{"Ticker": "-", "Signal": "No recent flow found", "Source": "X API", "Time": "Now"}])
+    except:
+        return pd.DataFrame([{"Ticker": "-", "Signal": "X API error", "Source": "X API", "Time": "Now"}])
 
 # ====================== UI ======================
 if st.sidebar.button("🔄 Refresh All Market Data"):
@@ -120,66 +139,33 @@ if st.sidebar.button("🔄 Refresh All Market Data"):
 min_score = st.sidebar.slider("Minimum Score", 0.0, 10.0, 6.5, 0.1)
 show_strong_only = st.sidebar.checkbox("Show Only Strong Buy / Buy Call", value=True)
 
-df_filtered = df[df["Score"] >= min_score].copy()
+df_filtered = df_scanner[df_scanner["Score"] >= min_score].copy()
 if show_strong_only:
     df_filtered = df_filtered[df_filtered["Readiness"].str.contains("Strong|Buy Call", regex=True)]
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Scanner", "📈 Charts", "💰 Simulator", "🔥 Manual X Signals", "🛎️ Telegram Alerts"])
 
 with tab1:
-    st.subheader("Strong Buy Call Candidates")
+    st.subheader("Strong Buy Call Candidates (15–40% from 52W High + ≥1M volume)")
     if df_filtered.empty:
-        st.info("No candidates match your filters. Try lowering the score slider or unchecking the box.")
-        st.dataframe(df.style.background_gradient(subset=["Score"], cmap="RdYlGn"), use_container_width=True)
+        st.info("No stocks currently meet all criteria. Try lowering the Minimum Score.")
+        st.dataframe(df_scanner.style.background_gradient(subset=["Score"], cmap="RdYlGn"), use_container_width=True)
     else:
-        st.dataframe(df_filtered.style.background_gradient(subset=["Score"], cmap="RdYlGn"), use_container_width=True, height=400)
-
-with tab2:
-    st.subheader("Score Distribution")
-    fig = px.bar(df, x="Ticker", y="Score", color="Readiness")
-    st.plotly_chart(fig, use_container_width=True)
-
-with tab3:
-    st.subheader("1-Contract Simulator")
-    selected = st.selectbox("Select Ticker", df["Ticker"])
-    contracts = st.slider("Contracts", 1, 20, 1)
-    row = df[df["Ticker"] == selected].iloc[0]
-    total = row['Risk_1_Contract'] * contracts
-    st.metric("Total Cost", f"${total:,}")
-    upside = st.slider("Expected Move %", 5, 60, 20)
-    profit = int(total * (upside / 20))
-    st.success(f"Potential Profit: **${profit:,}** (+{upside}%)")
-    st.warning(f"Max Loss: **-${total:,}**")
+        st.dataframe(
+            df_filtered.style.background_gradient(subset=["Score"], cmap="RdYlGn"),
+            use_container_width=True,
+            height=550
+        )
 
 with tab4:
     st.subheader("🔥 Manual X Options Flow Pull")
-    st.caption("Real options sweeps, blocks & flow alerts only")
-    
     if st.button("🚀 Pull Latest X Signals Now", type="primary", use_container_width=True):
-        with st.spinner("Fetching real options flow..."):
+        with st.spinner("Fetching..."):
             x_signals = get_x_signals()
             st.cache_data.clear()
         st.success("✅ Latest signals loaded!")
-    
     x_signals = get_x_signals()
-    
-    st.dataframe(
-        x_signals,
-        column_config={
-            "Signal": st.column_config.TextColumn(width="large")
-        },
-        use_container_width=True,
-        height=500
-    )
-
-with tab5:
-    st.subheader("🛎️ Telegram Alerts")
-    if st.button("📤 Send Test Telegram Alert", type="primary"):
-        msg = f"🧪 Test Alert from Call Buying Pro\nTime: {datetime.now().strftime('%H:%M')}"
-        if send_telegram_alert(msg):
-            st.success("✅ Sent to Telegram!")
-        else:
-            st.error("Telegram not configured")
+    st.dataframe(x_signals, column_config={"Signal": st.column_config.TextColumn(width="large")}, use_container_width=True, height=500)
 
 st.divider()
-st.caption("✅ Source now shows real @account names • Signal text wraps • Time in EST")
+st.caption("✅ All criteria applied: ≥1M volume • 15–40% from 52W High • High-quality large-cap companies")
