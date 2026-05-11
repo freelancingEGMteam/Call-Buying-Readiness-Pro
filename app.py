@@ -47,7 +47,6 @@ def get_options_scanner():
             percent_from_high = ((price / high_52w) - 1) * 100
             if not (-40 <= percent_from_high <= -15): continue
             
-            # Options check - NEW RULES: 10-60 DTE + premium ≤ $3
             expirations = stock.options
             suitable_call = False
             best_premium = None
@@ -58,7 +57,7 @@ def get_options_scanner():
                 if 10 <= days <= 60:
                     chain = stock.option_chain(exp)
                     calls = chain.calls
-                    good_calls = calls[(calls['lastPrice'] >= 2.5) & (calls['lastPrice'] <= 3.0)]  # Max $3 premium
+                    good_calls = calls[(calls['lastPrice'] >= 2.5) & (calls['lastPrice'] <= 3.0)]
                     if not good_calls.empty:
                         suitable_call = True
                         best_premium = round(good_calls['lastPrice'].iloc[0], 2)
@@ -154,18 +153,18 @@ with tab1:
         """)
     
     if df_filtered.empty:
-        st.info("No stocks currently meet all criteria (10–60 DTE + premium ≤ $3). Try lowering the Minimum Score.")
+        st.info("No stocks currently meet all criteria. Try lowering the Minimum Score.")
         st.dataframe(df_scanner.style.background_gradient(subset=["Score"], cmap="RdYlGn"), use_container_width=True)
     else:
         st.dataframe(
-            df_filtered.style.background_gradient(subset=["Score"], cmap="RdYlGn")
-                             .format({
-                                 "Price": "{:.1f}",
-                                 "52W_High": "{:.1f}",
-                                 "Score": "{:.1f}",
-                                 "Call_Premium": "{:.1f}",
-                                 "Risk_1_Contract": "{:.0f}"
-                             }),
+            df_filtered.style.background_gradient(subset=["Score"], cmap="RdYlGn"),
+            column_config={
+                "Price": st.column_config.NumberColumn(format="%.1f"),
+                "52W_High": st.column_config.NumberColumn(format="%.1f"),
+                "Score": st.column_config.NumberColumn(format="%.1f"),
+                "Call_Premium": st.column_config.NumberColumn(format="%.1f"),
+                "Risk_1_Contract": st.column_config.NumberColumn(format="%d"),
+            },
             use_container_width=True,
             height=550
         )
@@ -190,4 +189,4 @@ with tab5:
             st.error("Telegram not configured")
 
 st.divider()
-st.caption("✅ Max premium now ≤ $3.00 per share (max $300 per contract) • Minimum 10 DTE")
+st.caption("✅ Clean 1-decimal formatting applied everywhere • Max $3 premium")
