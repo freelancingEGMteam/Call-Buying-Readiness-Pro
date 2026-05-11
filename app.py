@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
 from datetime import datetime, timedelta
 import yfinance as yf
 import tweepy
@@ -16,14 +15,14 @@ X_BEARER = st.secrets.get("x", {}).get("bearer_token")
 TG_TOKEN = st.secrets.get("telegram", {}).get("bot_token")
 TG_CHAT_ID = st.secrets.get("telegram", {}).get("chat_id")
 
-# ====================== X FLOW WATCHLIST ======================
+# ====================== X FLOW WATCHLIST (signals only) ======================
 x_watchlist = st.sidebar.multiselect(
     "X Flow Watchlist (signals only)",
     ["MSFT", "META", "NFLX", "LLY", "MU", "CVNA", "INTC", "TSLA", "NVDA", "AAPL"],
     default=["MU", "CVNA", "NFLX", "TSLA", "META"]
 )
 
-# ====================== DYNAMIC SCANNER WITH ALL YOUR CRITERIA ======================
+# ====================== DYNAMIC SCANNER ======================
 @st.cache_data(ttl=600)
 def get_options_scanner():
     data = []
@@ -34,29 +33,21 @@ def get_options_scanner():
             stock = yf.Ticker(ticker)
             info = stock.info
             
-            # 1. Volume ≥ 1 million
             volume = info.get("regularMarketVolume") or info.get("volume") or 0
-            if volume < 1_000_000:
-                continue
-            
-            # 2. High-quality / strong company (market cap > $50B)
+            if volume < 1_000_000: continue
+                
             market_cap = info.get("marketCap") or 0
-            if market_cap < 50_000_000_000:
-                continue
+            if market_cap < 50_000_000_000: continue
                 
             price = info.get("regularMarketPrice") or info.get("currentPrice") or info.get("previousClose") or 0
-            if price == 0:
-                continue
+            if price == 0: continue
                 
-            # 3. 15% to 40% below 52-week high
             high_52w = info.get("fiftyTwoWeekHigh")
-            if not high_52w or high_52w == 0:
-                continue
+            if not high_52w: continue
             percent_from_high = ((price / high_52w) - 1) * 100
-            if not (-40 <= percent_from_high <= -15):
-                continue
+            if not (-40 <= percent_from_high <= -15): continue
             
-            # 4. Good call options (3-60 DTE + $3–$12 premium)
+            # Options check
             expirations = stock.options
             suitable_call = False
             best_premium = None
@@ -73,10 +64,8 @@ def get_options_scanner():
                         best_premium = round(good_calls['lastPrice'].iloc[0], 2)
                         dte = days
                         break
-            if not suitable_call:
-                continue
+            if not suitable_call: continue
             
-            # Scoring
             iv_rank_est = max(20, min(80, 100 - (price / high_52w * 50)))
             score = round(4 + (80 - iv_rank_est) * 0.08 + (best_premium or 5) * 0.3, 1)
             
@@ -105,7 +94,7 @@ def get_options_scanner():
 
 df_scanner = get_options_scanner()
 
-# ====================== MANUAL X SIGNALS (unchanged) ======================
+# ====================== MANUAL X SIGNALS ======================
 @st.cache_data(ttl=86400)
 def get_x_signals():
     if not X_BEARER:
@@ -132,6 +121,16 @@ def get_x_signals():
     except:
         return pd.DataFrame([{"Ticker": "-", "Signal": "X API error", "Source": "X API", "Time": "Now"}])
 
+# ====================== TELEGRAM ======================
+def send_telegram_alert(message):
+    if TG_TOKEN and TG_CHAT_ID:
+        try:
+            requests.post(f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage", json={"chat_id": TG_CHAT_ID, "text": message, "parse_mode": "HTML"})
+            return True
+        except:
+            return False
+    return False
+
 # ====================== UI ======================
 if st.sidebar.button("🔄 Refresh All Market Data"):
     st.rerun()
@@ -143,12 +142,31 @@ df_filtered = df_scanner[df_scanner["Score"] >= min_score].copy()
 if show_strong_only:
     df_filtered = df_filtered[df_filtered["Readiness"].str.contains("Strong|Buy Call", regex=True)]
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Scanner", "📈 Charts", "💰 Simulator", "🔥 Manual X Signals", "🛎️ Telegram Alerts"])
+tab1, tab4, tab5 = st.tabs(["📊 Scanner", "🔥 Manual X Signals", "🛎️ Telegram Alerts"])
 
 with tab1:
     st.subheader("Strong Buy Call Candidates (15–40% from 52W High + ≥1M volume)")
+    
+    # LEGEND
+    with st.expander("📋 Column Legend (click to expand)"):
+        st.markdown("""
+        | Column              | Meaning |
+        |---------------------|---------|
+        | **Ticker**          | Stock symbol |
+        | **Price**           | Current stock price |
+        | **52W_High**        | 52-week highest price |
+        | **Percent_From_High** | How far below 52W high (target: -15% to -40%) |
+        | **Score**           | Overall call-buying readiness (higher = better) |
+        | **IV_Rank**         | Implied volatility rank (lower = cheaper options) |
+        | **DTE**             | Days to expiration of the call option |
+        | **Call_Premium**    | Current price of a suitable call option |
+        | **Daily_Volume**    | Shares traded today (must be ≥ 1 million) |
+        | **Readiness**       | Strong Buy Call / Buy Call / Monitor |
+        | **Risk_1_Contract** | Approximate cost for 1 call contract |
+        """)
+    
     if df_filtered.empty:
-        st.info("No stocks currently meet all criteria. Try lowering the Minimum Score.")
+        st.info("No stocks currently meet all criteria. Try lowering the Minimum Score slider.")
         st.dataframe(df_scanner.style.background_gradient(subset=["Score"], cmap="RdYlGn"), use_container_width=True)
     else:
         st.dataframe(
@@ -167,5 +185,14 @@ with tab4:
     x_signals = get_x_signals()
     st.dataframe(x_signals, column_config={"Signal": st.column_config.TextColumn(width="large")}, use_container_width=True, height=500)
 
+with tab5:
+    st.subheader("🛎️ Telegram Alerts")
+    if st.button("📤 Send Test Telegram Alert", type="primary"):
+        msg = f"🧪 Test Alert from Call Buying Pro\nTime: {datetime.now().strftime('%H:%M')}"
+        if send_telegram_alert(msg):
+            st.success("✅ Sent to Telegram!")
+        else:
+            st.error("Telegram not configured")
+
 st.divider()
-st.caption("✅ All criteria applied: ≥1M volume • 15–40% from 52W High • High-quality large-cap companies")
+st.caption("✅ Scanner pulls from live market data (yfinance + options chains) • X is only used for the signals tab")
