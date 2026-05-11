@@ -53,7 +53,7 @@ watchlist = st.sidebar.multiselect("Permanent Watchlist",
 
 df = get_live_data(watchlist)
 
-# ====================== IMPROVED X SIGNALS + EST TIME + WRAPPED TEXT ======================
+# ====================== X SIGNALS WITH REAL ACCOUNT NAMES ======================
 @st.cache_data(ttl=86400)
 def get_x_signals():
     if not X_BEARER:
@@ -69,22 +69,35 @@ def get_x_signals():
             '-is:retweet lang:en'
         )
         
-        tweets = client.search_recent_tweets(query=query, max_results=20, tweet_fields=["created_at"])
+        tweets = client.search_recent_tweets(
+            query=query,
+            max_results=20,
+            tweet_fields=["created_at"],
+            expansions=["author_id"],
+            user_fields=["username"]
+        )
         
         signals = []
         if tweets.data:
+            # Create username lookup
+            users = {u.id: u.username for u in tweets.includes.get("users", [])}
+            
             for tweet in tweets.data[:12]:
                 text = tweet.text
-                # Convert UTC → EST (EDT in May)
+                author_id = tweet.author_id
+                username = users.get(author_id, "unknown")
+                
+                # UTC → EST
                 dt_est = tweet.created_at - timedelta(hours=4)
                 time_est = dt_est.strftime("%b %d %H:%M") + " EST"
                 
                 signals.append({
                     "Ticker": "Multiple",
                     "Signal": text,
-                    "Source": "@X_Flow",
+                    "Source": f"@{username}",
                     "Time": time_est
                 })
+        
         return pd.DataFrame(signals) if signals else pd.DataFrame([{"Ticker": "-", "Signal": "No strong options flow found recently", "Source": "X API", "Time": "Now"}])
     except Exception as e:
         return pd.DataFrame([{"Ticker": "-", "Signal": f"Error: {str(e)[:100]}", "Source": "X API", "Time": "Now"}])
@@ -150,14 +163,10 @@ with tab4:
     
     x_signals = get_x_signals()
     
-    # Wrapped Signal column + EST time
     st.dataframe(
         x_signals,
         column_config={
-            "Signal": st.column_config.TextColumn(
-                width="large",
-                help="Full options flow message"
-            )
+            "Signal": st.column_config.TextColumn(width="large")
         },
         use_container_width=True,
         height=500
@@ -173,4 +182,4 @@ with tab5:
             st.error("Telegram not configured")
 
 st.divider()
-st.caption("✅ Signal text now wraps fully • Time shown in EST • Click red button to refresh")
+st.caption("✅ Source now shows real @account names • Signal text wraps • Time in EST")
