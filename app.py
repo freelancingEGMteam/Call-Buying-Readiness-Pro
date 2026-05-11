@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from datetime import datetime
+from datetime import datetime, timedelta
 import yfinance as yf
 import tweepy
 import requests
@@ -16,7 +16,7 @@ X_BEARER = st.secrets.get("x", {}).get("bearer_token")
 TG_TOKEN = st.secrets.get("telegram", {}).get("bot_token")
 TG_CHAT_ID = st.secrets.get("telegram", {}).get("chat_id")
 
-# ====================== LIVE DATA (unchanged) ======================
+# ====================== LIVE DATA ======================
 @st.cache_data(ttl=300)
 def get_live_data(tickers):
     data = []
@@ -36,7 +36,6 @@ def get_live_data(tickers):
                 })
         except:
             pass
-
     df = pd.DataFrame(data)
     if len(df) < 2:
         st.warning("⚠️ Live prices temporarily unavailable — showing sample data")
@@ -54,7 +53,7 @@ watchlist = st.sidebar.multiselect("Permanent Watchlist",
 
 df = get_live_data(watchlist)
 
-# ====================== IMPROVED X SIGNALS (much tighter query) ======================
+# ====================== IMPROVED X SIGNALS + EST TIME + WRAPPED TEXT ======================
 @st.cache_data(ttl=86400)
 def get_x_signals():
     if not X_BEARER:
@@ -62,8 +61,6 @@ def get_x_signals():
     
     try:
         client = tweepy.Client(bearer_token=X_BEARER)
-        
-        # Much more targeted query for REAL options flow
         query = (
             '("call sweep" OR "sweep call" OR "call block" OR "unusual call" OR '
             '"options flow" OR "big call" OR "0DTE call" OR "unusual options" OR '
@@ -72,27 +69,27 @@ def get_x_signals():
             '-is:retweet lang:en'
         )
         
-        tweets = client.search_recent_tweets(
-            query=query,
-            max_results=20,
-            tweet_fields=["created_at"]
-        )
+        tweets = client.search_recent_tweets(query=query, max_results=20, tweet_fields=["created_at"])
         
         signals = []
         if tweets.data:
             for tweet in tweets.data[:12]:
-                text = tweet.text[:180] + "..." if len(tweet.text) > 180 else tweet.text
+                text = tweet.text
+                # Convert UTC → EST (EDT in May)
+                dt_est = tweet.created_at - timedelta(hours=4)
+                time_est = dt_est.strftime("%b %d %H:%M") + " EST"
+                
                 signals.append({
                     "Ticker": "Multiple",
                     "Signal": text,
                     "Source": "@X_Flow",
-                    "Time": tweet.created_at.strftime("%b %d %H:%M")
+                    "Time": time_est
                 })
-        return pd.DataFrame(signals) if signals else pd.DataFrame([{"Ticker": "-", "Signal": "No strong options flow found in the last few hours", "Source": "X API", "Time": "Now"}])
+        return pd.DataFrame(signals) if signals else pd.DataFrame([{"Ticker": "-", "Signal": "No strong options flow found recently", "Source": "X API", "Time": "Now"}])
     except Exception as e:
         return pd.DataFrame([{"Ticker": "-", "Signal": f"Error: {str(e)[:100]}", "Source": "X API", "Time": "Now"}])
 
-# ====================== TELEGRAM (unchanged) ======================
+# ====================== TELEGRAM ======================
 def send_telegram_alert(message):
     if TG_TOKEN and TG_CHAT_ID:
         try:
@@ -103,7 +100,7 @@ def send_telegram_alert(message):
             return False
     return False
 
-# ====================== UI (unchanged) ======================
+# ====================== UI ======================
 if st.sidebar.button("🔄 Refresh All Market Data"):
     st.rerun()
 
@@ -119,7 +116,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Scanner", "📈 Charts", "💰 Sim
 with tab1:
     st.subheader("Strong Buy Call Candidates")
     if df_filtered.empty:
-        st.info("No candidates match your filters. Try lowering the score or unchecking the filter.")
+        st.info("No candidates match your filters. Try lowering the score slider or unchecking the box.")
         st.dataframe(df.style.background_gradient(subset=["Score"], cmap="RdYlGn"), use_container_width=True)
     else:
         st.dataframe(df_filtered.style.background_gradient(subset=["Score"], cmap="RdYlGn"), use_container_width=True, height=400)
@@ -143,14 +140,28 @@ with tab3:
 
 with tab4:
     st.subheader("🔥 Manual X Options Flow Pull")
-    st.caption("Now filtered for real options sweeps, blocks & flow alerts")
+    st.caption("Real options sweeps, blocks & flow alerts only")
+    
     if st.button("🚀 Pull Latest X Signals Now", type="primary", use_container_width=True):
         with st.spinner("Fetching real options flow..."):
             x_signals = get_x_signals()
             st.cache_data.clear()
         st.success("✅ Latest signals loaded!")
+    
     x_signals = get_x_signals()
-    st.dataframe(x_signals, use_container_width=True)
+    
+    # Wrapped Signal column + EST time
+    st.dataframe(
+        x_signals,
+        column_config={
+            "Signal": st.column_config.TextColumn(
+                width="large",
+                help="Full options flow message"
+            )
+        },
+        use_container_width=True,
+        height=500
+    )
 
 with tab5:
     st.subheader("🛎️ Telegram Alerts")
@@ -162,4 +173,4 @@ with tab5:
             st.error("Telegram not configured")
 
 st.divider()
-st.caption("✅ Much cleaner options flow query • Click the red button to test")
+st.caption("✅ Signal text now wraps fully • Time shown in EST • Click red button to refresh")
