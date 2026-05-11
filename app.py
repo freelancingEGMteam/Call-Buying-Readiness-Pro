@@ -12,12 +12,11 @@ st.title("🚀 Call Buying Readiness Pro")
 st.caption("Live Prices • Manual X Options Flow • Telegram Alerts")
 
 # ====================== SECRETS ======================
-st.sidebar.header("🔑 API Setup")
 X_BEARER = st.secrets.get("x", {}).get("bearer_token")
 TG_TOKEN = st.secrets.get("telegram", {}).get("bot_token")
 TG_CHAT_ID = st.secrets.get("telegram", {}).get("chat_id")
 
-# ====================== ROBUST LIVE MARKET DATA ======================
+# ====================== ROBUST LIVE DATA + FALLBACK ======================
 @st.cache_data(ttl=300)
 def get_live_data(tickers):
     data = []
@@ -26,29 +25,29 @@ def get_live_data(tickers):
             stock = yf.Ticker(ticker)
             info = stock.info
             price = info.get("regularMarketPrice") or info.get("currentPrice") or info.get("previousClose") or 0
-            if price == 0:
-                continue
-            iv_rank_est = max(20, min(80, 100 - (price / max(info.get("fiftyTwoWeekHigh", price + 1), 1) * 50)))
-            score = round(4 + (80 - iv_rank_est) * 0.08, 1)
-            data.append({
-                "Ticker": ticker, "Price": round(price, 2), "Score": score,
-                "IV_Rank": int(iv_rank_est),
-                "Readiness": "Strong Buy Call" if iv_rank_est < 45 else "Buy Call" if iv_rank_est < 65 else "Monitor",
-                "Risk_1_Contract": int(price * 0.8)
-            })
+            if price > 0:
+                iv_rank_est = max(20, min(80, 100 - (price / max(info.get("fiftyTwoWeekHigh", price + 1), 1) * 50)))
+                score = round(4 + (80 - iv_rank_est) * 0.08, 1)
+                data.append({
+                    "Ticker": ticker, "Price": round(price, 2), "Score": score,
+                    "IV_Rank": int(iv_rank_est),
+                    "Readiness": "Strong Buy Call" if iv_rank_est < 45 else "Buy Call" if iv_rank_est < 65 else "Monitor",
+                    "Risk_1_Contract": int(price * 0.8)
+                })
         except:
-            pass  # skip failed tickers quietly
+            pass
 
     df = pd.DataFrame(data)
 
-    # Fallback if no data at all (prevents crash)
-    if df.empty or "Score" not in df.columns:
-        st.warning("⚠️ Could not fetch live prices right now. Using sample data.")
+    # Strong fallback if live data fails
+    if len(df) < 2:
+        st.warning("⚠️ Live prices temporarily unavailable — showing sample data")
         df = pd.DataFrame([
             {"Ticker": "NFLX", "Price": 87.4, "Score": 8.6, "IV_Rank": 26, "Readiness": "Strong Buy Call", "Risk_1_Contract": 450},
             {"Ticker": "MU",   "Price": 798.5, "Score": 8.7, "IV_Rank": 42, "Readiness": "Strong Buy Call", "Risk_1_Contract": 1250},
             {"Ticker": "CVNA", "Price": 287.2, "Score": 8.1, "IV_Rank": 35, "Readiness": "Strong Buy Call", "Risk_1_Contract": 850},
             {"Ticker": "META", "Price": 609.8, "Score": 7.6, "IV_Rank": 31, "Readiness": "Buy Call", "Risk_1_Contract": 1800},
+            {"Ticker": "INTC", "Price": 126.4, "Score": 7.5, "IV_Rank": 52, "Readiness": "Buy Call", "Risk_1_Contract": 650},
         ])
     return df
 
@@ -58,12 +57,11 @@ watchlist = st.sidebar.multiselect("Permanent Watchlist",
 
 df = get_live_data(watchlist)
 
-# ====================== MANUAL X SIGNALS (unchanged) ======================
+# ====================== MANUAL X SIGNALS (same as before) ======================
 @st.cache_data(ttl=86400)
 def get_x_signals():
     if not X_BEARER:
         return pd.DataFrame([{"Ticker": "-", "Signal": "Add X Bearer Token in Secrets", "Source": "X API", "Time": "Now"}])
-    # ... (same as previous version - keeping it short here)
     try:
         client = tweepy.Client(bearer_token=X_BEARER)
         query = "call OR sweep OR flow OR unusual (MU OR CVNA OR NFLX OR TSLA OR META OR MSFT OR INTC) -is:retweet lang:en"
@@ -77,18 +75,18 @@ def get_x_signals():
     except:
         return pd.DataFrame([{"Ticker": "-", "Signal": "X API error - try again later", "Source": "X API", "Time": "Now"}])
 
-# ====================== TELEGRAM (unchanged) ======================
+# ====================== TELEGRAM ======================
 def send_telegram_alert(message):
     if TG_TOKEN and TG_CHAT_ID:
         try:
-            requests.post(f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage",
+            requests.post(f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage", 
                           json={"chat_id": TG_CHAT_ID, "text": message, "parse_mode": "HTML"})
             return True
         except:
             return False
     return False
 
-# ====================== UI ======================
+# ====================== FILTERING + UI ======================
 if st.sidebar.button("🔄 Refresh All Market Data"):
     st.rerun()
 
@@ -96,6 +94,7 @@ min_score = st.sidebar.slider("Minimum Score", 0.0, 10.0, 6.5, 0.1)
 show_strong_only = st.sidebar.checkbox("Show Only Strong Buy / Buy Call", value=True)
 
 df_filtered = df[df["Score"] >= min_score].copy()
+
 if show_strong_only:
     df_filtered = df_filtered[df_filtered["Readiness"].str.contains("Strong|Buy Call", regex=True)]
 
@@ -103,7 +102,12 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Scanner", "📈 Charts", "💰 Sim
 
 with tab1:
     st.subheader("Strong Buy Call Candidates")
-    st.dataframe(df_filtered.style.background_gradient(subset=["Score"], cmap="RdYlGn"), use_container_width=True, height=400)
+    
+    if df_filtered.empty:
+        st.info("**No candidates match your current filters.**\n\nTry:\n• Lower the Minimum Score slider\n• Uncheck 'Show Only Strong Buy / Buy Call'")
+        st.dataframe(df.style.background_gradient(subset=["Score"], cmap="RdYlGn"), use_container_width=True)  # show all data
+    else:
+        st.dataframe(df_filtered.style.background_gradient(subset=["Score"], cmap="RdYlGn"), use_container_width=True, height=400)
 
 with tab2:
     st.subheader("Score Distribution")
@@ -142,4 +146,4 @@ with tab5:
             st.error("Telegram not configured")
 
 st.divider()
-st.caption("✅ Fixed • Robust data loading • $5 credits ready • Manual X pull (very low cost)")
+st.caption("✅ Table should now always show data • $5 credits ready")
