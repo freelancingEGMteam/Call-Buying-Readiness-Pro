@@ -8,7 +8,7 @@ import requests
 st.set_page_config(page_title="Call Buying Pro", layout="wide", initial_sidebar_state="expanded")
 
 st.title("🚀 Call Buying Readiness Pro")
-st.caption("High-Volume • 15–40% from 52W High • 10–60 DTE • Call Premium ≤ $5")
+st.caption("High-Volume • 15–40% from 52W High • 10–60 DTE • Call Premium ≤ $3")
 
 # ====================== SECRETS ======================
 X_BEARER = st.secrets.get("x", {}).get("bearer_token")
@@ -22,7 +22,7 @@ x_watchlist = st.sidebar.multiselect(
     default=["MU", "CVNA", "NFLX", "TSLA", "META"]
 )
 
-# ====================== DYNAMIC SCANNER (new rules) ======================
+# ====================== DYNAMIC SCANNER ======================
 @st.cache_data(ttl=600)
 def get_options_scanner():
     data = []
@@ -47,7 +47,7 @@ def get_options_scanner():
             percent_from_high = ((price / high_52w) - 1) * 100
             if not (-40 <= percent_from_high <= -15): continue
             
-            # Options check with new rules
+            # Options check - NEW RULES: 10-60 DTE + premium ≤ $3
             expirations = stock.options
             suitable_call = False
             best_premium = None
@@ -55,10 +55,10 @@ def get_options_scanner():
             for exp in expirations[:6]:
                 exp_date = datetime.strptime(exp, '%Y-%m-%d').date()
                 days = (exp_date - today).days
-                if 10 <= days <= 60:                     # ← NEW: min 10 days
+                if 10 <= days <= 60:
                     chain = stock.option_chain(exp)
                     calls = chain.calls
-                    good_calls = calls[(calls['lastPrice'] >= 3.0) & (calls['lastPrice'] <= 5.0)]  # ← NEW: max $5 premium
+                    good_calls = calls[(calls['lastPrice'] >= 2.5) & (calls['lastPrice'] <= 3.0)]  # Max $3 premium
                     if not good_calls.empty:
                         suitable_call = True
                         best_premium = round(good_calls['lastPrice'].iloc[0], 2)
@@ -67,7 +67,7 @@ def get_options_scanner():
             if not suitable_call: continue
             
             iv_rank_est = max(20, min(80, 100 - (price / high_52w * 50)))
-            score = round(4 + (80 - iv_rank_est) * 0.08 + (best_premium or 5) * 0.3, 1)
+            score = round(4 + (80 - iv_rank_est) * 0.08 + (best_premium or 3) * 0.3, 1)
             
             readiness = "Strong Buy Call" if iv_rank_est < 45 else "Buy Call" if iv_rank_est < 65 else "Monitor"
             
@@ -135,7 +135,7 @@ if show_strong_only:
 tab1, tab4, tab5 = st.tabs(["📊 Scanner", "🔥 Manual X Signals", "🛎️ Telegram Alerts"])
 
 with tab1:
-    st.subheader("Strong Buy Call Candidates (10–60 DTE + Call Premium ≤ $5)")
+    st.subheader("Strong Buy Call Candidates (10–60 DTE + Call Premium ≤ $3)")
     
     with st.expander("📋 Column Legend"):
         st.markdown("""
@@ -146,15 +146,15 @@ with tab1:
         | **Percent_From_High** | Distance below 52W high (ideal: -15% to -40%) |
         | **Score**           | Call-buying readiness score (higher = better) |
         | **IV_Rank**         | Implied volatility rank (lower = cheaper options) |
-        | **DTE**             | Days to expiration (now ≥ 10 days) |
-        | **Call_Premium**    | Price of call option (≤ $5.00) |
+        | **DTE**             | Days to expiration (minimum 10 days) |
+        | **Call_Premium**    | Price of call option (≤ $3.00) |
         | **Daily_Volume**    | Shares traded today (≥ 1 million) |
         | **Readiness**       | Strong Buy Call / Buy Call / Monitor |
-        | **Risk_1_Contract** | Approx. cost for 1 call contract (≤ $500) |
+        | **Risk_1_Contract** | Approx. cost for 1 call contract (≤ $300) |
         """)
     
     if df_filtered.empty:
-        st.info("No stocks currently meet all criteria (10–60 DTE + premium ≤ $5). Try lowering the Minimum Score.")
+        st.info("No stocks currently meet all criteria (10–60 DTE + premium ≤ $3). Try lowering the Minimum Score.")
         st.dataframe(df_scanner.style.background_gradient(subset=["Score"], cmap="RdYlGn"), use_container_width=True)
     else:
         st.dataframe(
@@ -190,4 +190,4 @@ with tab5:
             st.error("Telegram not configured")
 
 st.divider()
-st.caption("✅ Updated: Minimum 10 DTE + Max $5 call premium (≤ $500 per contract)")
+st.caption("✅ Max premium now ≤ $3.00 per share (max $300 per contract) • Minimum 10 DTE")
