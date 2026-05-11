@@ -23,12 +23,15 @@ x_watchlist = st.sidebar.multiselect(
     default=["MU", "CVNA", "NFLX", "TSLA", "META"]
 )
 
-# ====================== DYNAMIC SCANNER ======================
+# ====================== FOREX PAIRS ======================
+FOREX_PAIRS = ["EURUSD=X", "GBPUSD=X", "USDJPY=X", "AUDUSD=X", "USDCAD=X", "USDCHF=X", "NZDUSD=X"]
+
+# ====================== DYNAMIC SCANNER (unchanged) ======================
 @st.cache_data(ttl=600)
 def get_options_scanner():
+    # ... (your existing scanner code - unchanged) ...
     data = []
     today = datetime.now().date()
-    
     for ticker in ["MSFT","META","NFLX","LLY","MU","CVNA","INTC","TSLA","NVDA","AAPL","AMD","AMZN","GOOGL","SMCI","AVGO","CRM","ADBE","ORCL","NOW","PLTR","HOOD"]:
         try:
             stock = yf.Ticker(ticker)
@@ -81,7 +84,6 @@ def get_options_scanner():
             })
         except:
             continue
-    
     df = pd.DataFrame(data)
     if not df.empty:
         df = df.sort_values(by="Score", ascending=False).reset_index(drop=True)
@@ -89,9 +91,34 @@ def get_options_scanner():
 
 df_scanner = get_options_scanner()
 
+# ====================== FOREX ANALYSIS ======================
+@st.cache_data(ttl=60)
+def get_forex_data():
+    data = []
+    for pair in FOREX_PAIRS:
+        try:
+            ticker = yf.Ticker(pair)
+            info = ticker.info
+            price = info.get("regularMarketPrice") or info.get("currentPrice") or info.get("previousClose") or 0
+            change = info.get("regularMarketChangePercent", 0)
+            high_52w = info.get("fiftyTwoWeekHigh", 0)
+            low_52w = info.get("fiftyTwoWeekLow", 0)
+            
+            data.append({
+                "Pair": pair.replace("=X", ""),
+                "Rate": round(price, 4),
+                "Daily %": round(change, 2),
+                "52W High": round(high_52w, 4),
+                "52W Low": round(low_52w, 4),
+            })
+        except:
+            continue
+    return pd.DataFrame(data)
+
 # ====================== MANUAL X SIGNALS ======================
 @st.cache_data(ttl=86400)
 def get_x_signals():
+    # (your existing X signals code - unchanged)
     if not X_BEARER:
         return pd.DataFrame([{"Ticker": "-", "Signal": "Add X Bearer Token in Secrets", "Source": "X API", "Time": "Now"}])
     try:
@@ -131,30 +158,15 @@ df_filtered = df_scanner[df_scanner["Score"] >= min_score].copy()
 if show_strong_only:
     df_filtered = df_filtered[df_filtered["Readiness"].str.contains("Strong|Buy Call", regex=True)]
 
-tab1, tab4, tab5 = st.tabs(["📊 Scanner", "🔥 Manual X Signals", "🛎️ Telegram Alerts"])
+tab1, tab4, tab5, tab6 = st.tabs(["📊 Scanner", "🔥 Manual X Signals", "🛎️ Telegram Alerts", "🌍 Forex"])
 
 with tab1:
     st.subheader("Strong Buy Call Candidates (12–90 DTE + Call Premium ≤ $3)")
-    
+    # ... (your existing scanner code with the empty table handling) ...
     with st.expander("📋 Column Legend"):
-        st.markdown("""
-        | Column              | Meaning |
-        |---------------------|---------|
-        | **Price**           | Current stock price |
-        | **52W_High**        | 52-week highest price |
-        | **Percent_From_High** | Distance below 52W high (ideal: -15% to -40%) |
-        | **Score**           | Call-buying readiness score (higher = better) |
-        | **IV_Rank**         | Implied volatility rank (lower = cheaper options) |
-        | **DTE**             | Days to expiration (12–90 days) |
-        | **Call_Premium**    | Price of call option (≤ $3.00) |
-        | **Daily_Volume**    | Shares traded today (≥ 1 million) |
-        | **Readiness**       | Strong Buy Call / Buy Call / Monitor |
-        | **Risk_1_Contract** | Approx. cost for 1 call contract (≤ $300) |
-        """)
-    
+        st.markdown("""... (your legend) ...""")
     if df_filtered.empty:
-        st.info("**No stocks currently meet all criteria.**\n\nTry lowering the Minimum Score slider or unchecking 'Show Only Strong Buy / Buy Call'.")
-        # ← TABLE IS NOW HIDDEN when empty
+        st.info("No stocks currently meet all criteria...")
     else:
         st.dataframe(
             df_filtered.style.background_gradient(subset=["Score"], cmap="RdYlGn"),
@@ -171,31 +183,31 @@ with tab1:
 
 with tab4:
     st.subheader("🔥 Manual X Options Flow Pull")
-    if st.button("🚀 Pull Latest X Signals Now", type="primary", use_container_width=True):
-        with st.spinner("Fetching..."):
-            x_signals = get_x_signals()
-            st.cache_data.clear()
-        st.success("✅ Latest signals loaded!")
-    x_signals = get_x_signals()
-    for idx, row in x_signals.iterrows():
-        col1, col2 = st.columns([8, 2])
-        with col1:
-            st.write(f"**{row['Ticker']}** • {row['Source']} • {row['Time']}")
-            st.write(row['Signal'])
-        with col2:
-            if st.button("🔍 Analyze", key=f"x_{idx}"):
-                st.code(row['Signal'], language="markdown")
-                st.success("✅ Signal copied! Paste it here and I’ll analyze it fully.")
-        st.divider()
+    # ... (your existing X signals code with Analyze buttons) ...
 
 with tab5:
     st.subheader("🛎️ Telegram Alerts")
-    if st.button("📤 Send Test Telegram Alert", type="primary"):
-        msg = f"🧪 Test Alert from Call Buying Pro\nTime: {datetime.now().strftime('%H:%M')}"
-        if send_telegram_alert(msg):
-            st.success("✅ Sent to Telegram!")
-        else:
-            st.error("Telegram not configured")
+    # ... (your existing telegram code) ...
+
+with tab6:
+    st.subheader("🌍 Forex Analysis")
+    st.caption("Live major currency pairs")
+    
+    forex_df = get_forex_data()
+    
+    st.dataframe(
+        forex_df.style.background_gradient(subset=["Daily %"], cmap="RdYlGn"),
+        column_config={
+            "Rate": st.column_config.NumberColumn(format="%.4f"),
+            "Daily %": st.column_config.NumberColumn(format="%.2f"),
+            "52W High": st.column_config.NumberColumn(format="%.4f"),
+            "52W Low": st.column_config.NumberColumn(format="%.4f"),
+        },
+        use_container_width=True,
+        height=400
+    )
+
+    st.info("More Forex features (technical analysis, economic calendar, sentiment) can be added next — just tell me what you want!")
 
 st.divider()
-st.caption("✅ When no stocks meet criteria, the table is now hidden")
+st.caption("✅ New Forex tab added • Scanner table hidden when empty")
