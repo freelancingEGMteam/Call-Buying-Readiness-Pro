@@ -1,121 +1,153 @@
 import streamlit as st
 import pandas as pd
+import plotly.express as px
 from datetime import datetime
-
-# Try imports with fallbacks
-try:
-    import plotly.express as px
-    PLOTLY_AVAILABLE = True
-except ImportError:
-    PLOTLY_AVAILABLE = False
-
-try:
-    import matplotlib
-    MATPLOTLIB_AVAILABLE = True
-except ImportError:
-    MATPLOTLIB_AVAILABLE = False
+import yfinance as yf
+import tweepy
+import requests
 
 st.set_page_config(page_title="Call Buying Pro", layout="wide", initial_sidebar_state="expanded")
 
 st.title("🚀 Call Buying Readiness Pro")
-st.caption(f"Last Updated: {datetime.now().strftime('%b %d, %Y %H:%M')} | Options Flow + Scoring Engine")
+st.caption("Live yfinance • Real X Options Flow • Telegram Alerts")
 
-# ====================== SIDEBAR ======================
-st.sidebar.header("🎛️ Controls")
+# ====================== SECRETS & SETUP ======================
+st.sidebar.header("🔑 API Setup")
+st.sidebar.caption("Add these in Streamlit → Manage app → Secrets")
+
+X_BEARER = st.secrets.get("x", {}).get("bearer_token")
+TG_TOKEN = st.secrets.get("telegram", {}).get("bot_token")
+TG_CHAT_ID = st.secrets.get("telegram", {}).get("chat_id")
+
+if not X_BEARER:
+    st.sidebar.warning("⚠️ X Bearer Token not set in secrets")
+if not TG_TOKEN or not TG_CHAT_ID:
+    st.sidebar.warning("⚠️ Telegram Bot Token + Chat ID not set in secrets")
+
+# ====================== LIVE MARKET DATA ======================
+@st.cache_data(ttl=60)
+def get_live_data(tickers):
+    data = []
+    for ticker in tickers:
+        try:
+            stock = yf.Ticker(ticker)
+            info = stock.info
+            price = info.get("regularMarketPrice") or info.get("currentPrice") or info.get("previousClose") or 0
+            iv_rank_est = max(20, min(80, 100 - (price / max(info.get("fiftyTwoWeekHigh", price+1), 1) * 50)))
+            score = round(4 + (80 - iv_rank_est) * 0.08, 1)
+            data.append({
+                "Ticker": ticker, "Price": round(price, 2), "Score": score,
+                "IV_Rank": int(iv_rank_est), "Readiness": "Strong Buy Call" if iv_rank_est < 45 else "Buy Call" if iv_rank_est < 65 else "Monitor",
+                "Risk_1_Contract": int(price * 0.8)
+            })
+        except:
+            pass
+    return pd.DataFrame(data)
+
+watchlist = st.sidebar.multiselect("Permanent Watchlist", 
+    ["MSFT", "META", "NFLX", "LLY", "CVX", "XOM", "MU", "CVNA", "INTC", "TSLA", "NVDA", "AAPL"],
+    default=["MSFT", "META", "NFLX", "MU", "CVNA"])
+
+df = get_live_data(watchlist)
+
+# ====================== REAL-TIME X SIGNALS ======================
+@st.cache_data(ttl=300)  # 5 min cache
+def get_x_signals():
+    if not X_BEARER:
+        return pd.DataFrame([{"Ticker": "-", "Signal": "X API not configured", "Source": "Setup required", "Time": "Now"}])
+    
+    try:
+        client = tweepy.Client(bearer_token=X_BEARER)
+        query = "call OR sweep OR flow OR unusual (MU OR CVNA OR NFLX OR TSLA OR META OR MSFT) -is:retweet lang:en"
+        tweets = client.search_recent_tweets(
+            query=query,
+            max_results=20,
+            tweet_fields=["created_at", "author_id"]
+        )
+        
+        signals = []
+        if tweets.data:
+            for tweet in tweets.data[:8]:
+                text = tweet.text[:120] + "..." if len(tweet.text) > 120 else tweet.text
+                signals.append({
+                    "Ticker": "Multiple" if any(t in text.upper() for t in watchlist) else "General",
+                    "Signal": text,
+                    "Source": "@X_Flow",
+                    "Time": tweet.created_at.strftime("%H:%M")
+                })
+        return pd.DataFrame(signals) if signals else pd.DataFrame([{"Ticker": "-", "Signal": "No recent flow found", "Source": "X API", "Time": "Now"}])
+    except Exception as e:
+        return pd.DataFrame([{"Ticker": "-", "Signal": f"API Error: {str(e)[:80]}", "Source": "X API", "Time": "Now"}])
+
+x_signals = get_x_signals()
+
+# ====================== TELEGRAM ALERTS ======================
+def send_telegram_alert(message):
+    if TG_TOKEN and TG_CHAT_ID:
+        url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
+        payload = {"chat_id": TG_CHAT_ID, "text": message, "parse_mode": "HTML"}
+        try:
+            requests.post(url, json=payload)
+            return True
+        except:
+            return False
+    return False
+
+# ====================== UI ======================
 if st.sidebar.button("🔄 Refresh All Data"):
     st.rerun()
-
-watchlist = st.sidebar.multiselect(
-    "Permanent Watchlist",
-    ["MSFT", "META", "NFLX", "LLY", "CVX", "XOM", "MU", "CVNA", "INTC", "TSLA", "NVDA", "AAPL"],
-    default=["MSFT", "META", "NFLX", "MU", "CVNA"]
-)
 
 min_score = st.sidebar.slider("Minimum Score", 0.0, 10.0, 6.5, 0.1)
 show_strong_only = st.sidebar.checkbox("Show Only Strong Buy / Buy Call", value=True)
 
-# ====================== DATA ======================
-data = {
-    "Ticker": ["NFLX", "MU", "CVNA", "META", "INTC", "TSLA", "MSFT", "LLY"],
-    "Price": [87.4, 798.5, 287.2, 609.8, 126.4, 428.1, 412.7, 962.3],
-    "Score": [8.6, 8.7, 8.1, 7.6, 7.5, 6.9, 5.4, 6.4],
-    "IV_Rank": [26, 42, 35, 31, 52, 68, 71, 48],
-    "Days_to_Earnings": [66, 42, 28, 78, 19, 35, 78, 55],
-    "Readiness": ["Strong Buy Call", "Strong Buy Call", "Strong Buy Call", "Buy Call", "Buy Call", "Monitor", "Neutral", "Monitor"],
-    "Latest_Flow": ["Low IV + near support", "Heavy $1000C Jun sweeps", "$915K repeat calls", "Strong momentum", "Aggressive May calls", "Mixed strong calls", "High IV Rank", "Quiet"],
-    "Risk_1_Contract": [450, 1250, 850, 1800, 650, 950, 1250, 3400]
-}
-
-df = pd.DataFrame(data)
 df_filtered = df[df["Score"] >= min_score].copy()
-
 if show_strong_only:
     df_filtered = df_filtered[df_filtered["Readiness"].str.contains("Strong|Buy Call", regex=True)]
 
-# ====================== TABS ======================
-tab1, tab2, tab3, tab4 = st.tabs(["📊 Scanner", "📈 Charts", "💰 Simulator", "🔍 X Flow"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Scanner", "📈 Charts", "💰 Simulator", "🔥 Real X Signals", "🛎️ Telegram Alerts"])
 
 with tab1:
     st.subheader("Strong Buy Call Candidates")
-    
-    # Safer styling
-    display_df = df_filtered.copy()
-    if MATPLOTLIB_AVAILABLE:
-        styled_df = display_df.style.background_gradient(subset=["Score"], cmap="RdYlGn")
-    else:
-        styled_df = display_df
-    
-    st.dataframe(
-        styled_df.format({"Score": "{:.1f}"}),
-        use_container_width=True,
-        height=480
-    )
-    
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Strong Buy", len(df_filtered[df_filtered["Readiness"] == "Strong Buy Call"]))
-    with col2:
-        st.metric("Buy Call", len(df_filtered[df_filtered["Readiness"].str.contains("Buy Call")]))
-    with col3:
-        st.metric("Total Risk (1 contract)", f"${df_filtered['Risk_1_Contract'].sum():,}")
+    st.dataframe(df_filtered.style.background_gradient(subset=["Score"], cmap="RdYlGn"), use_container_width=True, height=400)
 
 with tab2:
-    st.subheader("Readiness Score Distribution")
-    if PLOTLY_AVAILABLE:
-        fig = px.bar(df, x="Ticker", y="Score", color="Readiness", title="Call Buying Scores")
-        st.plotly_chart(fig, use_container_width=True)
-        
-        fig2 = px.scatter(df, x="IV_Rank", y="Score", color="Ticker", 
-                         size="Days_to_Earnings", title="Lower IV = Better Opportunity")
-        st.plotly_chart(fig2, use_container_width=True)
-    else:
-        st.info("📊 Charts disabled (Plotly not installed)")
+    st.subheader("Score Distribution")
+    fig = px.bar(df, x="Ticker", y="Score", color="Readiness")
+    st.plotly_chart(fig, use_container_width=True)
 
 with tab3:
     st.subheader("1-Contract Simulator")
     selected = st.selectbox("Select Ticker", df["Ticker"])
-    contracts = st.slider("Number of Contracts", 1, 20, 1)
-    
+    contracts = st.slider("Contracts", 1, 20, 1)
     row = df[df["Ticker"] == selected].iloc[0]
-    total_cost = row['Risk_1_Contract'] * contracts
-    
-    st.metric("Total Cost", f"${total_cost:,}")
-    st.metric("Est. Breakeven", f"${row['Price'] * 1.07:.2f}")
-    
-    upside = st.slider("Expected Upside Move (%)", 5, 60, 20)
-    est_profit = int(total_cost * (upside / 20))
-    st.success(f"**Potential Profit**: ${est_profit:,} (+{upside}%)")
-    st.warning(f"**Max Loss**: -${total_cost:,}")
+    total = row['Risk_1_Contract'] * contracts
+    st.metric("Total Cost", f"${total:,}")
+    upside = st.slider("Expected Move %", 5, 60, 20)
+    profit = int(total * (upside / 20))
+    st.success(f"Potential Profit: **${profit:,}** (+{upside}%)")
+    st.warning(f"Max Loss: **-${total:,}**")
 
 with tab4:
-    st.subheader("Latest X Options Flow")
-    signals = pd.DataFrame({
-        "Ticker": ["MU", "CVNA", "NFLX"],
-        "Flow": ["Heavy $1000C Jun sweeps", "$915K repeat calls", "Low IV + support"],
-        "Source": ["@unusual_whales", "@baalhadid", "Scanner"],
-        "Time": ["2h ago", "Today", "Yesterday"]
-    })
-    st.dataframe(signals, use_container_width=True)
+    st.subheader("🔥 Real-Time X Options Flow")
+    st.caption("Fetched live via X API v2 (updates every 5 min)")
+    st.dataframe(x_signals, use_container_width=True)
+    if st.button("🔄 Refresh X Signals Now"):
+        st.cache_data.clear()
+        st.rerun()
 
-st.divider()
-st.caption("💡 Add matplotlib to requirements.txt | We can add live market data next")
+with tab5:
+    st.subheader("🛎️ Telegram Alerts")
+    st.write("Get instant alerts when a Strong Buy Call appears or new X flow is detected.")
+    
+    if st.button("📤 Send Test Telegram Alert", type="primary"):
+        test_msg = f"🧪 Test Alert from Call Buying Pro\nTime: {datetime.now().strftime('%H:%M')}\nStrong signals detected!"
+        if send_telegram_alert(test_msg):
+            st.success("✅ Test message sent to your Telegram!")
+        else:
+            st.error("Telegram not configured. Add secrets.")
+
+    st.caption("""
+    **Setup Telegram in 2 minutes:**
+    1. Talk to @BotFather on Telegram → /newbot → get **BOT_TOKEN**
+    2. Send any message to your bot → go to https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates → copy **chat_id**
+    3. In Streamlit Secrets add:
