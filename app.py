@@ -2,9 +2,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
 import yfinance as yf
-import tweepy
 import requests
-import re
 
 st.set_page_config(page_title="Call Buying Pro", layout="wide", initial_sidebar_state="expanded")
 
@@ -12,37 +10,35 @@ st.title("🚀 Call Buying Readiness Pro")
 st.caption("High-Volume • 15–40% from 52W High • 12–90 DTE • Call Premium ≤ $3.00")
 
 # ====================== SECRETS ======================
-X_BEARER = st.secrets.get("x", {}).get("bearer_token")
 TG_TOKEN = st.secrets.get("telegram", {}).get("bot_token")
 TG_CHAT_ID = st.secrets.get("telegram", {}).get("chat_id")
-
-# ====================== X FLOW WATCHLIST ======================
-x_watchlist = st.sidebar.multiselect(
-    "X Flow Watchlist (signals only)",
-    ["MSFT", "META", "NFLX", "LLY", "MU", "CVNA", "INTC", "TSLA", "NVDA", "AAPL"],
-    default=["MU", "CVNA", "NFLX", "TSLA", "META"]
-)
 
 # ====================== DYNAMIC SCANNER ======================
 @st.cache_data(ttl=600)
 def get_options_scanner():
     data = []
     today = datetime.now().date()
+    
     for ticker in ["MSFT","META","NFLX","LLY","MU","CVNA","INTC","TSLA","NVDA","AAPL","AMD","AMZN","GOOGL","SMCI","AVGO","CRM","ADBE","ORCL","NOW","PLTR","HOOD"]:
         try:
             stock = yf.Ticker(ticker)
             info = stock.info
+            
             volume = info.get("regularMarketVolume") or info.get("volume") or 0
             if volume < 1_000_000: continue
+                
             market_cap = info.get("marketCap") or 0
             if market_cap < 50_000_000_000: continue
+                
             price = info.get("regularMarketPrice") or info.get("currentPrice") or info.get("previousClose") or 0
             if price == 0: continue
+                
             high_52w = info.get("fiftyTwoWeekHigh")
             if not high_52w: continue
             percent_from_high = ((price / high_52w) - 1) * 100
             if not (-40 <= percent_from_high <= -15): continue
             
+            # 12–90 DTE + premium ≤ $3.00 (no minimum)
             expirations = stock.options
             suitable_call = False
             best_premium = None
@@ -80,6 +76,7 @@ def get_options_scanner():
             })
         except:
             continue
+    
     df = pd.DataFrame(data)
     if not df.empty:
         df = df.sort_values(by="Score", ascending=False).reset_index(drop=True)
@@ -87,51 +84,16 @@ def get_options_scanner():
 
 df_scanner = get_options_scanner()
 
-# ====================== X FOREX SIGNALS ======================
-@st.cache_data(ttl=86400)
-def get_x_forex_signals():
-    if not X_BEARER:
-        return pd.DataFrame([{"Pair": "-", "Type": "-", "Signal": "Add X Bearer Token in Secrets", "Source": "X API", "Time": "Now"}])
-    try:
-        client = tweepy.Client(bearer_token=X_BEARER)
-        query = (
-            '(EURUSD OR GBPUSD OR USDJPY OR AUDUSD OR USDCAD OR USDCHF OR NZDUSD OR "EUR/USD" OR "GBP/USD") '
-            '("buy" OR "sell" OR "long" OR "short" OR "call" OR "put" OR "signal" OR "setup" OR "target") '
-            '-is:retweet lang:en'
-        )
-        tweets = client.search_recent_tweets(query=query, max_results=20, tweet_fields=["created_at"], expansions=["author_id"], user_fields=["username"])
-        signals = []
-        if tweets.data:
-            users = {u.id: u.username for u in tweets.includes.get("users", [])}
-            for tweet in tweets.data[:12]:
-                text = tweet.text
-                username = users.get(tweet.author_id, "unknown")
-                dt_est = tweet.created_at - timedelta(hours=4)
-                time_est = dt_est.strftime("%b %d %H:%M") + " EST"
-                
-                # Extract pair
-                pair_match = re.search(r'(EURUSD|GBPUSD|USDJPY|AUDUSD|USDCAD|USDCHF|NZDUSD|EUR/USD|GBP/USD)', text, re.IGNORECASE)
-                pair = pair_match.group(1).upper().replace("/", "") if pair_match else "Multiple"
-                
-                # Detect Call/Put or Direction
-                text_lower = text.lower()
-                if any(x in text_lower for x in ["buy", "long", "call"]):
-                    signal_type = "Bullish / Call"
-                elif any(x in text_lower for x in ["sell", "short", "put"]):
-                    signal_type = "Bearish / Put"
-                else:
-                    signal_type = "Unknown"
-                
-                signals.append({
-                    "Pair": pair,
-                    "Type": signal_type,
-                    "Signal": text,
-                    "Source": f"@{username}",
-                    "Time": time_est
-                })
-        return pd.DataFrame(signals) if signals else pd.DataFrame([{"Pair": "-", "Type": "-", "Signal": "No recent Forex signals found", "Source": "X API", "Time": "Now"}])
-    except:
-        return pd.DataFrame([{"Pair": "-", "Type": "-", "Signal": "X API error", "Source": "X API", "Time": "Now"}])
+# ====================== TELEGRAM ======================
+def send_telegram_alert(message):
+    if TG_TOKEN and TG_CHAT_ID:
+        try:
+            requests.post(f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage", 
+                          json={"chat_id": TG_CHAT_ID, "text": message, "parse_mode": "HTML"})
+            return True
+        except:
+            return False
+    return False
 
 # ====================== UI ======================
 if st.sidebar.button("🔄 Refresh All Market Data"):
@@ -144,37 +106,44 @@ df_filtered = df_scanner[df_scanner["Score"] >= min_score].copy()
 if show_strong_only:
     df_filtered = df_filtered[df_filtered["Readiness"].str.contains("Strong|Buy Call", regex=True)]
 
-tab1, tab4, tab5, tab6 = st.tabs(["📊 Scanner", "🔥 X Forex Signals", "🛎️ Telegram Alerts", "🌍 Forex Swing Signals"])
+tab1, tab2 = st.tabs(["📊 Scanner", "🛎️ Telegram Alerts"])
 
 with tab1:
     st.subheader("Strong Buy Call Candidates (12–90 DTE + Call Premium ≤ $3.00)")
+    
     with st.expander("📋 Column Legend"):
-        st.markdown("... (your legend) ...")
+        st.markdown("""
+        | Column              | Meaning |
+        |---------------------|---------|
+        | **Price**           | Current stock price |
+        | **52W_High**        | 52-week highest price |
+        | **Percent_From_High** | Distance below 52W high (ideal: -15% to -40%) |
+        | **Score**           | Call-buying readiness score (higher = better) |
+        | **IV_Rank**         | Implied volatility rank (lower = cheaper options) |
+        | **DTE**             | Days to expiration (12–90 days) |
+        | **Call_Premium**    | Price of call option (≤ $3.00) |
+        | **Daily_Volume**    | Shares traded today (≥ 1 million) |
+        | **Readiness**       | Strong Buy Call / Buy Call / Monitor |
+        | **Risk_1_Contract** | Approx. cost for 1 call contract |
+        """)
+    
     if df_filtered.empty:
         st.info("**No stocks currently meet all criteria.**\n\nTry lowering the Minimum Score slider or unchecking 'Show Only Strong Buy / Buy Call'.")
     else:
-        st.dataframe(df_filtered.style.background_gradient(subset=["Score"], cmap="RdYlGn"), use_container_width=True, height=550)
+        st.dataframe(
+            df_filtered.style.background_gradient(subset=["Score"], cmap="RdYlGn"),
+            column_config={
+                "Price": st.column_config.NumberColumn(format="%.1f"),
+                "52W_High": st.column_config.NumberColumn(format="%.1f"),
+                "Score": st.column_config.NumberColumn(format="%.1f"),
+                "Call_Premium": st.column_config.NumberColumn(format="%.1f"),
+                "Risk_1_Contract": st.column_config.NumberColumn(format="%d"),
+            },
+            use_container_width=True,
+            height=550
+        )
 
-with tab4:
-    st.subheader("🔥 X Forex Signals")
-    if st.button("🚀 Pull Latest X Forex Signals Now", type="primary", use_container_width=True):
-        with st.spinner("Fetching..."):
-            x_signals = get_x_forex_signals()
-            st.cache_data.clear()
-        st.success("✅ Latest Forex signals loaded!")
-    x_signals = get_x_forex_signals()
-    for idx, row in x_signals.iterrows():
-        col1, col2 = st.columns([8, 2])
-        with col1:
-            st.write(f"**{row['Pair']}** • **{row['Type']}** • {row['Source']} • {row['Time']}")
-            st.write(row['Signal'])
-        with col2:
-            if st.button("🔍 Analyze", key=f"x_{idx}"):
-                st.code(row['Signal'], language="markdown")
-                st.success("✅ Signal copied! Paste it here and I’ll analyze it fully.")
-        st.divider()
-
-with tab5:
+with tab2:
     st.subheader("🛎️ Telegram Alerts")
     if st.button("📤 Send Test Telegram Alert", type="primary"):
         msg = f"🧪 Test Alert from Call Buying Pro\nTime: {datetime.now().strftime('%H:%M')}"
@@ -183,9 +152,5 @@ with tab5:
         else:
             st.error("Telegram not configured")
 
-with tab6:
-    st.subheader("🌍 Forex Swing Signals — High Confidence Only")
-    # (your existing forex swing code)
-
 st.divider()
-st.caption("✅ Scanner shows clear message when empty • X Forex Signals tab added")
+st.caption("✅ Dashboard simplified • Only Scanner + Telegram Alerts")
