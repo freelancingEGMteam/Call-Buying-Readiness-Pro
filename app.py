@@ -87,68 +87,19 @@ def get_options_scanner():
 
 df_scanner = get_options_scanner()
 
-# ====================== FOREX SWING SIGNALS (High Confidence) ======================
-@st.cache_data(ttl=300)
-def get_forex_swing_signals():
-    pairs = ["EURUSD=X", "GBPUSD=X", "USDJPY=X", "AUDUSD=X", "USDCAD=X", "USDCHF=X", "NZDUSD=X"]
-    data = []
-    for pair in pairs:
-        try:
-            ticker = yf.Ticker(pair)
-            hist = ticker.history(period="90d")
-            if len(hist) < 30: continue
-            current_price = hist['Close'].iloc[-1]
-            ema200 = hist['Close'].ewm(span=200).mean().iloc[-1]
-            rsi = 100 - (100 / (1 + (hist['Close'].diff(1).clip(lower=0).ewm(span=14).mean() / 
-                                      hist['Close'].diff(1).clip(upper=0).abs().ewm(span=14).mean())))
-            rsi = rsi.iloc[-1]
-            
-            direction = "Bullish" if current_price > ema200 and rsi < 70 else "Bearish" if current_price < ema200 and rsi > 30 else "Neutral"
-            if abs(rsi - 50) <= 15: continue  # High Confidence only
-            
-            recent_high = hist['High'].rolling(20).max().iloc[-1]
-            recent_low = hist['Low'].rolling(20).min().iloc[-1]
-            
-            if direction == "Bullish":
-                entry = round(current_price, 4)
-                target1 = round(recent_high * 1.015, 4)
-                stop = round(recent_low * 0.985, 4)
-            else:
-                entry = round(current_price, 4)
-                target1 = round(recent_low * 0.985, 4)
-                stop = round(recent_high * 1.015, 4)
-            
-            rr = round((abs(target1 - entry) / abs(entry - stop)), 2) if abs(entry - stop) > 0 else 0.0
-            
-            data.append({
-                "Pair": pair.replace("=X", ""),
-                "Direction": direction,
-                "Price": round(current_price, 4),
-                "RSI": round(rsi, 1),
-                "Entry": entry,
-                "Target 1": target1,
-                "Stop Loss": stop,
-                "R:R": rr,
-                "Confidence": "High"
-            })
-        except:
-            continue
-    df = pd.DataFrame(data)
-    if df.empty:
-        return df
-    return df.sort_values(by="R:R", ascending=False).reset_index(drop=True)
-
-# ====================== MANUAL X SIGNALS ======================
+# ====================== IMPROVED CALL/PUT DETECTION ======================
 @st.cache_data(ttl=86400)
 def get_x_signals():
     if not X_BEARER:
-        return pd.DataFrame([{"Ticker": "-", "Signal": "Add X Bearer Token in Secrets", "Source": "X API", "Time": "Now"}])
+        return pd.DataFrame([{"Ticker": "-", "Type": "-", "Signal": "Add X Bearer Token in Secrets", "Source": "X API", "Time": "Now"}])
     try:
         client = tweepy.Client(bearer_token=X_BEARER)
         tickers_str = " OR ".join(x_watchlist)
         query = (
-            '("call sweep" OR "sweep call" OR "call block" OR "unusual call" OR '
-            '"options flow" OR "big call" OR "0DTE call" OR "unusual options" OR "call buying") '
+            '("call sweep" OR "sweep call" OR "call block" OR "unusual call" OR "big call" OR '
+            '"call buying" OR "buying calls" OR "call flow" OR '
+            '"put sweep" OR "sweep put" OR "put block" OR "unusual put" OR "big put" OR '
+            '"put buying" OR "buying puts" OR "put flow") '
             f'({tickers_str}) -is:retweet lang:en'
         )
         tweets = client.search_recent_tweets(query=query, max_results=20, tweet_fields=["created_at"], expansions=["author_id"], user_fields=["username"])
@@ -161,13 +112,43 @@ def get_x_signals():
                 username = users.get(tweet.author_id, "unknown")
                 dt_est = tweet.created_at - timedelta(hours=4)
                 time_est = dt_est.strftime("%b %d %H:%M") + " EST"
+                
+                # Ticker extraction
                 extracted = re.findall(r'\b([A-Z]{2,5})\b', text)
                 detected = [t for t in extracted if t in known_tickers]
                 ticker_display = detected[0] if detected else "Multiple"
-                signals.append({"Ticker": ticker_display, "Signal": text, "Source": f"@{username}", "Time": time_est})
-        return pd.DataFrame(signals) if signals else pd.DataFrame([{"Ticker": "-", "Signal": "No recent flow found", "Source": "X API", "Time": "Now"}])
+                
+                # Better Call/Put detection
+                text_lower = text.lower()
+                call_phrases = ["call sweep", "sweep call", "call block", "unusual call", "big call", "call buying", "buying calls", "call flow"]
+                put_phrases = ["put sweep", "sweep put", "put block", "unusual put", "big put", "put buying", "buying puts", "put flow"]
+                
+                has_call = any(phrase in text_lower for phrase in call_phrases)
+                has_put = any(phrase in text_lower for phrase in put_phrases)
+                
+                if has_call and has_put:
+                    signal_type = "Mixed"
+                elif has_call:
+                    signal_type = "Call"
+                elif has_put:
+                    signal_type = "Put"
+                elif "call" in text_lower:
+                    signal_type = "Call"
+                elif "put" in text_lower:
+                    signal_type = "Put"
+                else:
+                    signal_type = "Unknown"
+                
+                signals.append({
+                    "Ticker": ticker_display,
+                    "Type": signal_type,
+                    "Signal": text,
+                    "Source": f"@{username}",
+                    "Time": time_est
+                })
+        return pd.DataFrame(signals) if signals else pd.DataFrame([{"Ticker": "-", "Type": "-", "Signal": "No recent flow found", "Source": "X API", "Time": "Now"}])
     except:
-        return pd.DataFrame([{"Ticker": "-", "Signal": "X API error", "Source": "X API", "Time": "Now"}])
+        return pd.DataFrame([{"Ticker": "-", "Type": "-", "Signal": "X API error", "Source": "X API", "Time": "Now"}])
 
 # ====================== UI ======================
 if st.sidebar.button("🔄 Refresh All Market Data"):
@@ -180,10 +161,11 @@ df_filtered = df_scanner[df_scanner["Score"] >= min_score].copy()
 if show_strong_only:
     df_filtered = df_filtered[df_filtered["Readiness"].str.contains("Strong|Buy Call", regex=True)]
 
-tab1, tab4, tab5, tab6 = st.tabs(["📊 Scanner", "🔥 Manual X Signals", "🛎️ Telegram Alerts", "🌍 Forex Swing Signals"])
+tab1, tab4, tab5 = st.tabs(["📊 Scanner", "🔥 Manual X Signals", "🛎️ Telegram Alerts"])
 
 with tab1:
     st.subheader("Strong Buy Call Candidates (12–90 DTE + Call Premium ≤ $3.00)")
+    # (your scanner code with legend and table)
     with st.expander("📋 Column Legend"):
         st.markdown("... (your legend) ...")
     if df_filtered.empty:
@@ -194,20 +176,20 @@ with tab1:
 with tab4:
     st.subheader("🔥 Manual X Options Flow Pull")
     if st.button("🚀 Pull Latest X Signals Now", type="primary", use_container_width=True):
-        with st.spinner("Fetching latest X signals + Forex signals..."):
+        with st.spinner("Fetching..."):
             x_signals = get_x_signals()
-            st.cache_data.clear()          # This also refreshes Forex tab
+            st.cache_data.clear()
         st.success("✅ Latest signals loaded!")
     x_signals = get_x_signals()
     for idx, row in x_signals.iterrows():
         col1, col2 = st.columns([8, 2])
         with col1:
-            st.write(f"**{row['Ticker']}** • {row['Source']} • {row['Time']}")
+            st.write(f"**{row['Ticker']}** • **{row['Type']}** • {row['Source']} • {row['Time']}")
             st.write(row['Signal'])
         with col2:
             if st.button("🔍 Analyze", key=f"x_{idx}"):
                 st.code(row['Signal'], language="markdown")
-                st.success("✅ Copied! Paste here for full analysis.")
+                st.success("✅ Signal copied! Paste it here and I’ll analyze it fully.")
         st.divider()
 
 with tab5:
@@ -219,24 +201,5 @@ with tab5:
         else:
             st.error("Telegram not configured")
 
-with tab6:
-    st.subheader("🌍 Forex Swing Signals — High Confidence Only")
-    forex_signals = get_forex_swing_signals()
-    if forex_signals.empty:
-        st.info("No High Confidence Forex swing setups at the moment.")
-    else:
-        st.dataframe(
-            forex_signals.style.background_gradient(subset=["R:R"], cmap="RdYlGn"),
-            column_config={
-                "Price": st.column_config.NumberColumn(format="%.4f"),
-                "Entry": st.column_config.NumberColumn(format="%.4f"),
-                "Target 1": st.column_config.NumberColumn(format="%.4f"),
-                "Stop Loss": st.column_config.NumberColumn(format="%.4f"),
-                "R:R": st.column_config.NumberColumn(format="%.2f"),
-            },
-            use_container_width=True,
-            height=500
-        )
-
 st.divider()
-st.caption("✅ Forex tab is back • Not affected by Minimum Score slider • X Pull button now refreshes Forex too")
+st.caption("✅ Improved Call/Put detection + clean formatting")
