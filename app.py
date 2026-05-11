@@ -15,7 +15,7 @@ X_BEARER = st.secrets.get("x", {}).get("bearer_token")
 TG_TOKEN = st.secrets.get("telegram", {}).get("bot_token")
 TG_CHAT_ID = st.secrets.get("telegram", {}).get("chat_id")
 
-# ====================== X FLOW WATCHLIST (signals only) ======================
+# ====================== X FLOW WATCHLIST ======================
 x_watchlist = st.sidebar.multiselect(
     "X Flow Watchlist (signals only)",
     ["MSFT", "META", "NFLX", "LLY", "MU", "CVNA", "INTC", "TSLA", "NVDA", "AAPL"],
@@ -121,16 +121,6 @@ def get_x_signals():
     except:
         return pd.DataFrame([{"Ticker": "-", "Signal": "X API error", "Source": "X API", "Time": "Now"}])
 
-# ====================== TELEGRAM ======================
-def send_telegram_alert(message):
-    if TG_TOKEN and TG_CHAT_ID:
-        try:
-            requests.post(f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage", json={"chat_id": TG_CHAT_ID, "text": message, "parse_mode": "HTML"})
-            return True
-        except:
-            return False
-    return False
-
 # ====================== UI ======================
 if st.sidebar.button("🔄 Refresh All Market Data"):
     st.rerun()
@@ -147,30 +137,35 @@ tab1, tab4, tab5 = st.tabs(["📊 Scanner", "🔥 Manual X Signals", "🛎️ Te
 with tab1:
     st.subheader("Strong Buy Call Candidates (15–40% from 52W High + ≥1M volume)")
     
-    # LEGEND
-    with st.expander("📋 Column Legend (click to expand)"):
+    with st.expander("📋 Column Legend"):
         st.markdown("""
         | Column              | Meaning |
         |---------------------|---------|
-        | **Ticker**          | Stock symbol |
         | **Price**           | Current stock price |
         | **52W_High**        | 52-week highest price |
-        | **Percent_From_High** | How far below 52W high (target: -15% to -40%) |
-        | **Score**           | Overall call-buying readiness (higher = better) |
+        | **Percent_From_High** | Distance below 52W high (ideal: -15% to -40%) |
+        | **Score**           | Call-buying readiness score (higher = better) |
         | **IV_Rank**         | Implied volatility rank (lower = cheaper options) |
-        | **DTE**             | Days to expiration of the call option |
-        | **Call_Premium**    | Current price of a suitable call option |
-        | **Daily_Volume**    | Shares traded today (must be ≥ 1 million) |
+        | **DTE**             | Days until option expiration |
+        | **Call_Premium**    | Price of a suitable call option |
+        | **Daily_Volume**    | Shares traded today (≥ 1 million required) |
         | **Readiness**       | Strong Buy Call / Buy Call / Monitor |
-        | **Risk_1_Contract** | Approximate cost for 1 call contract |
+        | **Risk_1_Contract** | Approx. cost for 1 call contract |
         """)
     
     if df_filtered.empty:
-        st.info("No stocks currently meet all criteria. Try lowering the Minimum Score slider.")
+        st.info("No stocks currently meet all criteria. Try lowering the Minimum Score.")
         st.dataframe(df_scanner.style.background_gradient(subset=["Score"], cmap="RdYlGn"), use_container_width=True)
     else:
         st.dataframe(
-            df_filtered.style.background_gradient(subset=["Score"], cmap="RdYlGn"),
+            df_filtered.style.background_gradient(subset=["Score"], cmap="RdYlGn")
+                             .format({
+                                 "Price": "{:.1f}",
+                                 "52W_High": "{:.1f}",
+                                 "Score": "{:.1f}",
+                                 "Call_Premium": "{:.1f}",
+                                 "Risk_1_Contract": "{:.0f}"
+                             }),
             use_container_width=True,
             height=550
         )
@@ -195,4 +190,4 @@ with tab5:
             st.error("Telegram not configured")
 
 st.divider()
-st.caption("✅ Scanner pulls from live market data (yfinance + options chains) • X is only used for the signals tab")
+st.caption("✅ All numbers now formatted to 1 decimal place • Clean & readable")
