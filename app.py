@@ -8,7 +8,7 @@ import requests
 st.set_page_config(page_title="Call Buying Pro", layout="wide", initial_sidebar_state="expanded")
 
 st.title("🚀 Call Buying Readiness Pro")
-st.caption("High-Volume • 15–40% from 52W High • 10–60 DTE • Call Premium ≤ $3")
+st.caption("High-Volume • 15–40% from 52W High • 12–90 DTE • Call Premium ≤ $3")
 
 # ====================== SECRETS ======================
 X_BEARER = st.secrets.get("x", {}).get("bearer_token")
@@ -22,7 +22,7 @@ x_watchlist = st.sidebar.multiselect(
     default=["MU", "CVNA", "NFLX", "TSLA", "META"]
 )
 
-# ====================== DYNAMIC SCANNER ======================
+# ====================== DYNAMIC SCANNER (12-90 DTE) ======================
 @st.cache_data(ttl=600)
 def get_options_scanner():
     data = []
@@ -47,14 +47,15 @@ def get_options_scanner():
             percent_from_high = ((price / high_52w) - 1) * 100
             if not (-40 <= percent_from_high <= -15): continue
             
+            # Options check: 12-90 DTE + premium ≤ $3
             expirations = stock.options
             suitable_call = False
             best_premium = None
             dte = None
-            for exp in expirations[:6]:
+            for exp in expirations[:8]:
                 exp_date = datetime.strptime(exp, '%Y-%m-%d').date()
                 days = (exp_date - today).days
-                if 10 <= days <= 60:
+                if 12 <= days <= 90:                          # ← Updated to 12-90
                     chain = stock.option_chain(exp)
                     calls = chain.calls
                     good_calls = calls[(calls['lastPrice'] >= 2.5) & (calls['lastPrice'] <= 3.0)]
@@ -134,7 +135,7 @@ if show_strong_only:
 tab1, tab4, tab5 = st.tabs(["📊 Scanner", "🔥 Manual X Signals", "🛎️ Telegram Alerts"])
 
 with tab1:
-    st.subheader("Strong Buy Call Candidates (10–60 DTE + Call Premium ≤ $3)")
+    st.subheader("Strong Buy Call Candidates (12–90 DTE + Call Premium ≤ $3)")
     
     with st.expander("📋 Column Legend"):
         st.markdown("""
@@ -145,7 +146,7 @@ with tab1:
         | **Percent_From_High** | Distance below 52W high (ideal: -15% to -40%) |
         | **Score**           | Call-buying readiness score (higher = better) |
         | **IV_Rank**         | Implied volatility rank (lower = cheaper options) |
-        | **DTE**             | Days to expiration (minimum 10 days) |
+        | **DTE**             | Days to expiration (12–90 days) |
         | **Call_Premium**    | Price of call option (≤ $3.00) |
         | **Daily_Volume**    | Shares traded today (≥ 1 million) |
         | **Readiness**       | Strong Buy Call / Buy Call / Monitor |
@@ -189,4 +190,4 @@ with tab5:
             st.error("Telegram not configured")
 
 st.divider()
-st.caption("✅ Clean 1-decimal formatting applied everywhere • Max $3 premium")
+st.caption("✅ DTE range is now 12–90 days • Clean 1-decimal formatting")
