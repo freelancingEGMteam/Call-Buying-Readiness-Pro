@@ -48,7 +48,7 @@ def get_options_scanner():
             percent_from_high = ((price / high_52w) - 1) * 100
             if not (-40 <= percent_from_high <= -15): continue
             
-            # Options check: 12-90 DTE + premium ≤ $3.00 (NO minimum)
+            # 12-90 DTE + premium ≤ $3.00 (no minimum)
             expirations = stock.options
             suitable_call = False
             best_premium = None
@@ -59,7 +59,7 @@ def get_options_scanner():
                 if 12 <= days <= 90:
                     chain = stock.option_chain(exp)
                     calls = chain.calls
-                    good_calls = calls[calls['lastPrice'] <= 3.0]   # ← Only upper limit
+                    good_calls = calls[calls['lastPrice'] <= 3.0]
                     if not good_calls.empty:
                         suitable_call = True
                         best_premium = round(good_calls['lastPrice'].iloc[0], 2)
@@ -94,6 +94,60 @@ def get_options_scanner():
     return df
 
 df_scanner = get_options_scanner()
+
+# ====================== FOREX SWING SIGNALS (HIGH CONFIDENCE ONLY) ======================
+@st.cache_data(ttl=300)
+def get_forex_swing_signals():
+    pairs = ["EURUSD=X", "GBPUSD=X", "USDJPY=X", "AUDUSD=X", "USDCAD=X", "USDCHF=X", "NZDUSD=X"]
+    data = []
+    for pair in pairs:
+        try:
+            ticker = yf.Ticker(pair)
+            hist = ticker.history(period="90d")
+            if len(hist) < 30: continue
+                
+            current_price = hist['Close'].iloc[-1]
+            ema200 = hist['Close'].ewm(span=200).mean().iloc[-1]
+            rsi = 100 - (100 / (1 + (hist['Close'].diff(1).clip(lower=0).ewm(span=14).mean() / 
+                                      hist['Close'].diff(1).clip(upper=0).abs().ewm(span=14).mean())))
+            rsi = rsi.iloc[-1]
+            
+            direction = "Bullish" if current_price > ema200 and rsi < 70 else "Bearish" if current_price < ema200 and rsi > 30 else "Neutral"
+            
+            if abs(rsi - 50) <= 15:  # High Confidence only
+                continue
+                
+            recent_high = hist['High'].rolling(20).max().iloc[-1]
+            recent_low = hist['Low'].rolling(20).min().iloc[-1]
+            
+            if direction == "Bullish":
+                entry = round(current_price, 4)
+                target1 = round(recent_high * 1.015, 4)
+                stop = round(recent_low * 0.985, 4)
+            else:
+                entry = round(current_price, 4)
+                target1 = round(recent_low * 0.985, 4)
+                stop = round(recent_high * 1.015, 4)
+            
+            rr = round((abs(target1 - entry) / abs(entry - stop)), 2) if abs(entry - stop) > 0 else 0.0
+            
+            data.append({
+                "Pair": pair.replace("=X", ""),
+                "Direction": direction,
+                "Price": round(current_price, 4),
+                "RSI": round(rsi, 1),
+                "Entry": entry,
+                "Target 1": target1,
+                "Stop Loss": stop,
+                "R:R": rr,
+                "Confidence": "High"
+            })
+        except:
+            continue
+    df = pd.DataFrame(data)
+    if df.empty:
+        return df
+    return df.sort_values(by="R:R", ascending=False).reset_index(drop=True)
 
 # ====================== MANUAL X SIGNALS ======================
 @st.cache_data(ttl=86400)
@@ -137,11 +191,10 @@ df_filtered = df_scanner[df_scanner["Score"] >= min_score].copy()
 if show_strong_only:
     df_filtered = df_filtered[df_filtered["Readiness"].str.contains("Strong|Buy Call", regex=True)]
 
-tab1, tab4, tab5 = st.tabs(["📊 Scanner", "🔥 Manual X Signals", "🛎️ Telegram Alerts"])
+tab1, tab4, tab5, tab6 = st.tabs(["📊 Scanner", "🔥 Manual X Signals", "🛎️ Telegram Alerts", "🌍 Forex Swing Signals"])
 
 with tab1:
     st.subheader("Strong Buy Call Candidates (12–90 DTE + Call Premium ≤ $3.00)")
-    
     with st.expander("📋 Column Legend"):
         st.markdown("""
         | Column              | Meaning |
@@ -149,9 +202,9 @@ with tab1:
         | **Price**           | Current stock price |
         | **52W_High**        | 52-week highest price |
         | **Percent_From_High** | Distance below 52W high (ideal: -15% to -40%) |
-        | **Score**           | Call-buying readiness score (higher = better) |
-        | **IV_Rank**         | Implied volatility rank (lower = cheaper options) |
-        | **DTE**             | Days to expiration (12–90 days) |
+        | **Score**           | Call-buying readiness score |
+        | **IV_Rank**         | Implied volatility rank |
+        | **DTE**             | Days to expiration |
         | **Call_Premium**    | Price of call option (≤ $3.00) |
         | **Daily_Volume**    | Shares traded today (≥ 1 million) |
         | **Readiness**       | Strong Buy Call / Buy Call / Monitor |
@@ -202,5 +255,25 @@ with tab5:
         else:
             st.error("Telegram not configured")
 
+with tab6:
+    st.subheader("🌍 Forex Swing Signals — High Confidence Only")
+    st.caption("Strong momentum setups only")
+    forex_signals = get_forex_swing_signals()
+    if forex_signals.empty:
+        st.info("No High Confidence swing setups at the moment.")
+    else:
+        st.dataframe(
+            forex_signals.style.background_gradient(subset=["R:R"], cmap="RdYlGn"),
+            column_config={
+                "Price": st.column_config.NumberColumn(format="%.4f"),
+                "Entry": st.column_config.NumberColumn(format="%.4f"),
+                "Target 1": st.column_config.NumberColumn(format="%.4f"),
+                "Stop Loss": st.column_config.NumberColumn(format="%.4f"),
+                "R:R": st.column_config.NumberColumn(format="%.2f"),
+            },
+            use_container_width=True,
+            height=500
+        )
+
 st.divider()
-st.caption("✅ Premium filter now ≤ $3.00 with no minimum")
+st.caption("✅ All tabs restored • Forex Swing Signals included")
