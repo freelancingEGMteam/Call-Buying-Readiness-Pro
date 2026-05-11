@@ -26,9 +26,9 @@ x_watchlist = st.sidebar.multiselect(
 # ====================== DYNAMIC SCANNER ======================
 @st.cache_data(ttl=600)
 def get_options_scanner():
-    # (same clean scanner as before - 12-90 DTE, max $3 premium, etc.)
     data = []
     today = datetime.now().date()
+    
     for ticker in ["MSFT","META","NFLX","LLY","MU","CVNA","INTC","TSLA","NVDA","AAPL","AMD","AMZN","GOOGL","SMCI","AVGO","CRM","ADBE","ORCL","NOW","PLTR","HOOD"]:
         try:
             stock = yf.Ticker(ticker)
@@ -81,6 +81,7 @@ def get_options_scanner():
             })
         except:
             continue
+    
     df = pd.DataFrame(data)
     if not df.empty:
         df = df.sort_values(by="Score", ascending=False).reset_index(drop=True)
@@ -88,7 +89,7 @@ def get_options_scanner():
 
 df_scanner = get_options_scanner()
 
-# ====================== MANUAL X SIGNALS + TICKER EXTRACTION ======================
+# ====================== MANUAL X SIGNALS ======================
 @st.cache_data(ttl=86400)
 def get_x_signals():
     if not X_BEARER:
@@ -111,18 +112,10 @@ def get_x_signals():
                 username = users.get(tweet.author_id, "unknown")
                 dt_est = tweet.created_at - timedelta(hours=4)
                 time_est = dt_est.strftime("%b %d %H:%M") + " EST"
-                
-                # Try to extract ticker from text
                 extracted = re.findall(r'\b([A-Z]{2,5})\b', text)
                 detected = [t for t in extracted if t in known_tickers]
                 ticker_display = detected[0] if detected else "Multiple"
-                
-                signals.append({
-                    "Ticker": ticker_display,
-                    "Signal": text,
-                    "Source": f"@{username}",
-                    "Time": time_est
-                })
+                signals.append({"Ticker": ticker_display, "Signal": text, "Source": f"@{username}", "Time": time_est})
         return pd.DataFrame(signals) if signals else pd.DataFrame([{"Ticker": "-", "Signal": "No recent flow found", "Source": "X API", "Time": "Now"}])
     except:
         return pd.DataFrame([{"Ticker": "-", "Signal": "X API error", "Source": "X API", "Time": "Now"}])
@@ -142,23 +135,39 @@ tab1, tab4, tab5 = st.tabs(["📊 Scanner", "🔥 Manual X Signals", "🛎️ Te
 
 with tab1:
     st.subheader("Strong Buy Call Candidates (12–90 DTE + Call Premium ≤ $3)")
+    
     with st.expander("📋 Column Legend"):
-        st.markdown("...same legend as before...")
+        st.markdown("""
+        | Column              | Meaning |
+        |---------------------|---------|
+        | **Price**           | Current stock price |
+        | **52W_High**        | 52-week highest price |
+        | **Percent_From_High** | Distance below 52W high (ideal: -15% to -40%) |
+        | **Score**           | Call-buying readiness score (higher = better) |
+        | **IV_Rank**         | Implied volatility rank (lower = cheaper options) |
+        | **DTE**             | Days to expiration (12–90 days) |
+        | **Call_Premium**    | Price of call option (≤ $3.00) |
+        | **Daily_Volume**    | Shares traded today (≥ 1 million) |
+        | **Readiness**       | Strong Buy Call / Buy Call / Monitor |
+        | **Risk_1_Contract** | Approx. cost for 1 call contract (≤ $300) |
+        """)
     
     if df_filtered.empty:
-        st.info("No stocks currently meet all criteria...")
-        st.dataframe(df_scanner.style.background_gradient(subset=["Score"], cmap="RdYlGn"), use_container_width=True)
+        st.info("**No stocks currently meet all criteria.**\n\nTry lowering the Minimum Score slider or unchecking 'Show Only Strong Buy / Buy Call'.")
+        # ← TABLE IS NOW HIDDEN when empty
     else:
-        for idx, row in df_filtered.iterrows():
-            col1, col2 = st.columns([8, 2])
-            with col1:
-                st.dataframe(pd.DataFrame([row]).style.background_gradient(subset=["Score"], cmap="RdYlGn"), use_container_width=True, hide_index=True)
-            with col2:
-                if st.button("🔍 Analyze", key=f"scan_{idx}"):
-                    analysis_text = f"Ticker: {row['Ticker']}\nPrice: ${row['Price']}\nScore: {row['Score']}\nIV Rank: {row['IV_Rank']}\nDTE: {row['DTE']}\nCall Premium: ${row['Call_Premium']}\nReadiness: {row['Readiness']}"
-                    st.code(analysis_text, language="markdown")
-                    st.success("✅ Copied! Paste this in our chat and I’ll give you my full analysis.")
-            st.divider()
+        st.dataframe(
+            df_filtered.style.background_gradient(subset=["Score"], cmap="RdYlGn"),
+            column_config={
+                "Price": st.column_config.NumberColumn(format="%.1f"),
+                "52W_High": st.column_config.NumberColumn(format="%.1f"),
+                "Score": st.column_config.NumberColumn(format="%.1f"),
+                "Call_Premium": st.column_config.NumberColumn(format="%.1f"),
+                "Risk_1_Contract": st.column_config.NumberColumn(format="%d"),
+            },
+            use_container_width=True,
+            height=550
+        )
 
 with tab4:
     st.subheader("🔥 Manual X Options Flow Pull")
@@ -189,4 +198,4 @@ with tab5:
             st.error("Telegram not configured")
 
 st.divider()
-st.caption("✅ Click **Analyze** on any signal (Scanner or X) → paste it here and I’ll do a full analysis")
+st.caption("✅ When no stocks meet criteria, the table is now hidden")
