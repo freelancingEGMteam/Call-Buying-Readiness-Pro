@@ -2,3 +2,6 @@ streamlit
 pandas
 plotly
 matplotlib
+yfinance
+tweepy
+requests
