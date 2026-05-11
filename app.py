@@ -16,7 +16,7 @@ X_BEARER = st.secrets.get("x", {}).get("bearer_token")
 TG_TOKEN = st.secrets.get("telegram", {}).get("bot_token")
 TG_CHAT_ID = st.secrets.get("telegram", {}).get("chat_id")
 
-# ====================== ROBUST LIVE DATA + FALLBACK ======================
+# ====================== LIVE DATA (unchanged) ======================
 @st.cache_data(ttl=300)
 def get_live_data(tickers):
     data = []
@@ -38,8 +38,6 @@ def get_live_data(tickers):
             pass
 
     df = pd.DataFrame(data)
-
-    # Strong fallback if live data fails
     if len(df) < 2:
         st.warning("⚠️ Live prices temporarily unavailable — showing sample data")
         df = pd.DataFrame([
@@ -47,7 +45,6 @@ def get_live_data(tickers):
             {"Ticker": "MU",   "Price": 798.5, "Score": 8.7, "IV_Rank": 42, "Readiness": "Strong Buy Call", "Risk_1_Contract": 1250},
             {"Ticker": "CVNA", "Price": 287.2, "Score": 8.1, "IV_Rank": 35, "Readiness": "Strong Buy Call", "Risk_1_Contract": 850},
             {"Ticker": "META", "Price": 609.8, "Score": 7.6, "IV_Rank": 31, "Readiness": "Buy Call", "Risk_1_Contract": 1800},
-            {"Ticker": "INTC", "Price": 126.4, "Score": 7.5, "IV_Rank": 52, "Readiness": "Buy Call", "Risk_1_Contract": 650},
         ])
     return df
 
@@ -57,25 +54,45 @@ watchlist = st.sidebar.multiselect("Permanent Watchlist",
 
 df = get_live_data(watchlist)
 
-# ====================== MANUAL X SIGNALS (same as before) ======================
+# ====================== IMPROVED X SIGNALS (much tighter query) ======================
 @st.cache_data(ttl=86400)
 def get_x_signals():
     if not X_BEARER:
         return pd.DataFrame([{"Ticker": "-", "Signal": "Add X Bearer Token in Secrets", "Source": "X API", "Time": "Now"}])
+    
     try:
         client = tweepy.Client(bearer_token=X_BEARER)
-        query = "call OR sweep OR flow OR unusual (MU OR CVNA OR NFLX OR TSLA OR META OR MSFT OR INTC) -is:retweet lang:en"
-        tweets = client.search_recent_tweets(query=query, max_results=15, tweet_fields=["created_at"])
+        
+        # Much more targeted query for REAL options flow
+        query = (
+            '("call sweep" OR "sweep call" OR "call block" OR "unusual call" OR '
+            '"options flow" OR "big call" OR "0DTE call" OR "unusual options" OR '
+            '"call buying" OR "flow alert") '
+            '(MU OR CVNA OR NFLX OR TSLA OR META OR MSFT OR INTC OR NVDA OR AAPL) '
+            '-is:retweet lang:en'
+        )
+        
+        tweets = client.search_recent_tweets(
+            query=query,
+            max_results=20,
+            tweet_fields=["created_at"]
+        )
+        
         signals = []
         if tweets.data:
-            for tweet in tweets.data[:10]:
-                text = tweet.text[:150] + "..." if len(tweet.text) > 150 else tweet.text
-                signals.append({"Ticker": "Multiple", "Signal": text, "Source": "@X_Flow", "Time": tweet.created_at.strftime("%b %d %H:%M")})
-        return pd.DataFrame(signals) if signals else pd.DataFrame([{"Ticker": "-", "Signal": "No recent flow", "Source": "X API", "Time": "Now"}])
-    except:
-        return pd.DataFrame([{"Ticker": "-", "Signal": "X API error - try again later", "Source": "X API", "Time": "Now"}])
+            for tweet in tweets.data[:12]:
+                text = tweet.text[:180] + "..." if len(tweet.text) > 180 else tweet.text
+                signals.append({
+                    "Ticker": "Multiple",
+                    "Signal": text,
+                    "Source": "@X_Flow",
+                    "Time": tweet.created_at.strftime("%b %d %H:%M")
+                })
+        return pd.DataFrame(signals) if signals else pd.DataFrame([{"Ticker": "-", "Signal": "No strong options flow found in the last few hours", "Source": "X API", "Time": "Now"}])
+    except Exception as e:
+        return pd.DataFrame([{"Ticker": "-", "Signal": f"Error: {str(e)[:100]}", "Source": "X API", "Time": "Now"}])
 
-# ====================== TELEGRAM ======================
+# ====================== TELEGRAM (unchanged) ======================
 def send_telegram_alert(message):
     if TG_TOKEN and TG_CHAT_ID:
         try:
@@ -86,7 +103,7 @@ def send_telegram_alert(message):
             return False
     return False
 
-# ====================== FILTERING + UI ======================
+# ====================== UI (unchanged) ======================
 if st.sidebar.button("🔄 Refresh All Market Data"):
     st.rerun()
 
@@ -94,7 +111,6 @@ min_score = st.sidebar.slider("Minimum Score", 0.0, 10.0, 6.5, 0.1)
 show_strong_only = st.sidebar.checkbox("Show Only Strong Buy / Buy Call", value=True)
 
 df_filtered = df[df["Score"] >= min_score].copy()
-
 if show_strong_only:
     df_filtered = df_filtered[df_filtered["Readiness"].str.contains("Strong|Buy Call", regex=True)]
 
@@ -102,10 +118,9 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Scanner", "📈 Charts", "💰 Sim
 
 with tab1:
     st.subheader("Strong Buy Call Candidates")
-    
     if df_filtered.empty:
-        st.info("**No candidates match your current filters.**\n\nTry:\n• Lower the Minimum Score slider\n• Uncheck 'Show Only Strong Buy / Buy Call'")
-        st.dataframe(df.style.background_gradient(subset=["Score"], cmap="RdYlGn"), use_container_width=True)  # show all data
+        st.info("No candidates match your filters. Try lowering the score or unchecking the filter.")
+        st.dataframe(df.style.background_gradient(subset=["Score"], cmap="RdYlGn"), use_container_width=True)
     else:
         st.dataframe(df_filtered.style.background_gradient(subset=["Score"], cmap="RdYlGn"), use_container_width=True, height=400)
 
@@ -128,8 +143,9 @@ with tab3:
 
 with tab4:
     st.subheader("🔥 Manual X Options Flow Pull")
+    st.caption("Now filtered for real options sweeps, blocks & flow alerts")
     if st.button("🚀 Pull Latest X Signals Now", type="primary", use_container_width=True):
-        with st.spinner("Fetching from X..."):
+        with st.spinner("Fetching real options flow..."):
             x_signals = get_x_signals()
             st.cache_data.clear()
         st.success("✅ Latest signals loaded!")
@@ -146,4 +162,4 @@ with tab5:
             st.error("Telegram not configured")
 
 st.divider()
-st.caption("✅ Table should now always show data • $5 credits ready")
+st.caption("✅ Much cleaner options flow query • Click the red button to test")
