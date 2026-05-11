@@ -2,14 +2,18 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 
-# Try to import Plotly with fallback
+# Try imports with fallbacks
 try:
     import plotly.express as px
-    import plotly.graph_objects as go
     PLOTLY_AVAILABLE = True
 except ImportError:
     PLOTLY_AVAILABLE = False
-    st.warning("⚠️ Plotly not available. Charts will be disabled.")
+
+try:
+    import matplotlib
+    MATPLOTLIB_AVAILABLE = True
+except ImportError:
+    MATPLOTLIB_AVAILABLE = False
 
 st.set_page_config(page_title="Call Buying Pro", layout="wide", initial_sidebar_state="expanded")
 
@@ -46,16 +50,23 @@ df = pd.DataFrame(data)
 df_filtered = df[df["Score"] >= min_score].copy()
 
 if show_strong_only:
-    df_filtered = df_filtered[df_filtered["Readiness"].str.contains("Strong Buy|Buy Call")]
+    df_filtered = df_filtered[df_filtered["Readiness"].str.contains("Strong|Buy Call", regex=True)]
 
 # ====================== TABS ======================
 tab1, tab2, tab3, tab4 = st.tabs(["📊 Scanner", "📈 Charts", "💰 Simulator", "🔍 X Flow"])
 
 with tab1:
     st.subheader("Strong Buy Call Candidates")
+    
+    # Safer styling
+    display_df = df_filtered.copy()
+    if MATPLOTLIB_AVAILABLE:
+        styled_df = display_df.style.background_gradient(subset=["Score"], cmap="RdYlGn")
+    else:
+        styled_df = display_df
+    
     st.dataframe(
-        df_filtered.style.background_gradient(subset=["Score"], cmap="RdYlGn")
-                         .format({"Score": "{:.1f}"}),
+        styled_df.format({"Score": "{:.1f}"}),
         use_container_width=True,
         height=480
     )
@@ -64,9 +75,9 @@ with tab1:
     with col1:
         st.metric("Strong Buy", len(df_filtered[df_filtered["Readiness"] == "Strong Buy Call"]))
     with col2:
-        st.metric("Buy Call", len(df_filtered[df_filtered["Readiness"] == "Buy Call"]))
+        st.metric("Buy Call", len(df_filtered[df_filtered["Readiness"].str.contains("Buy Call")]))
     with col3:
-        st.metric("Total Risk (1 contract each)", f"${df_filtered['Risk_1_Contract'].sum():,}")
+        st.metric("Total Risk (1 contract)", f"${df_filtered['Risk_1_Contract'].sum():,}")
 
 with tab2:
     st.subheader("Readiness Score Distribution")
@@ -74,11 +85,11 @@ with tab2:
         fig = px.bar(df, x="Ticker", y="Score", color="Readiness", title="Call Buying Scores")
         st.plotly_chart(fig, use_container_width=True)
         
-        fig2 = px.scatter(df, x="IV_Rank", y="Score", color="Ticker", size="Days_to_Earnings",
-                          title="Lower IV Rank = Better Setup", hover_data=["Latest_Flow"])
+        fig2 = px.scatter(df, x="IV_Rank", y="Score", color="Ticker", 
+                         size="Days_to_Earnings", title="Lower IV = Better Opportunity")
         st.plotly_chart(fig2, use_container_width=True)
     else:
-        st.info("Charts disabled — Plotly not installed.")
+        st.info("📊 Charts disabled (Plotly not installed)")
 
 with tab3:
     st.subheader("1-Contract Simulator")
@@ -86,29 +97,25 @@ with tab3:
     contracts = st.slider("Number of Contracts", 1, 20, 1)
     
     row = df[df["Ticker"] == selected].iloc[0]
+    total_cost = row['Risk_1_Contract'] * contracts
     
-    premium = row['Risk_1_Contract']
-    total_cost = premium * contracts
-    
-    st.metric("Total Cost for {} contract(s)".format(contracts), f"${total_cost:,}")
-    st.metric("Est. Breakeven", f"${row['Price'] * 1.07:.2f} (approx)")
+    st.metric("Total Cost", f"${total_cost:,}")
+    st.metric("Est. Breakeven", f"${row['Price'] * 1.07:.2f}")
     
     upside = st.slider("Expected Upside Move (%)", 5, 60, 20)
     est_profit = int(total_cost * (upside / 20))
-    
     st.success(f"**Potential Profit**: ${est_profit:,} (+{upside}%)")
     st.warning(f"**Max Loss**: -${total_cost:,}")
 
 with tab4:
-    st.subheader("Latest Options Flow from X")
-    st.info("This section can be connected to real X signals later.")
+    st.subheader("Latest X Options Flow")
     signals = pd.DataFrame({
         "Ticker": ["MU", "CVNA", "NFLX"],
-        "Flow": ["Heavy bullish sweeps $1000C", "$915K repeat call buying", "Support + low IV flow"],
-        "Source": ["@unusual_whales / @DarkFlowAlert", "@baalhadid", "Our scanner"],
-        "Time": ["2 hours ago", "Today", "Yesterday"]
+        "Flow": ["Heavy $1000C Jun sweeps", "$915K repeat calls", "Low IV + support"],
+        "Source": ["@unusual_whales", "@baalhadid", "Scanner"],
+        "Time": ["2h ago", "Today", "Yesterday"]
     })
     st.dataframe(signals, use_container_width=True)
 
 st.divider()
-st.caption("💡 Tip: Add requirements.txt with: streamlit, pandas, plotly | Refresh often | We can add live Polygon data next")
+st.caption("💡 Add matplotlib to requirements.txt | We can add live market data next")
