@@ -1,0 +1,132 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0
+// © Call-Buying-Readiness-Pro
+
+//@version=5
+indicator("OR 50% Call/Put Entry", overlay=true, max_lines_count=500, max_labels_count=500)
+
+// ─── Inputs ────────────────────────────────────────────────────────────────────
+show_pdh     = input.bool(true,  "Show Previous Day High",   group="Display")
+show_or_lvls = input.bool(true,  "Show OR High/Low",         group="Display")
+show_signals = input.bool(true,  "Show Entry Signals",       group="Display")
+signal_once  = input.bool(true,  "One Signal Per Day",       group="Display")
+
+call_col = input.color(color.new(color.lime,  0), "Call Color", group="Display")
+put_col  = input.color(color.new(color.red,   0), "Put Color",  group="Display")
+pdh_col  = input.color(color.new(color.blue,  0), "PDH Color",  group="Display")
+
+// ─── Time helpers (exchange timezone) ─────────────────────────────────────────
+bar_hhmm      = hour(time, syminfo.timezone) * 100 + minute(time, syminfo.timezone)
+in_or_window  = bar_hhmm >= 930  and bar_hhmm < 1030
+after_or      = bar_hhmm >= 1030
+market_open   = bar_hhmm >= 930  and bar_hhmm < 1600
+
+// Detect start of new trading session (first bar at or after 9:30)
+is_new_session = ta.change(dayofmonth(time, syminfo.timezone)) != 0 or
+                 (in_or_window and not in_or_window[1])
+
+// ─── Previous Day High ─────────────────────────────────────────────────────────
+prev_day_high = request.security(syminfo.tickerid, "D", high[1], lookahead=barmerge.lookahead_on)
+
+// ─── Opening Range State ───────────────────────────────────────────────────────
+var float or_open  = na
+var float or_high  = na
+var float or_low   = na
+var float or_mid   = na
+var bool  or_bull  = na   // true = green OR → CALL bias, false = red OR → PUT bias
+var bool  or_ready = false
+var bool  signaled = false
+
+// Reset each new session
+if is_new_session
+    or_open  := na
+    or_high  := na
+    or_low   := na
+    or_mid   := na
+    or_bull  := na
+    or_ready := false
+    signaled := false
+
+// Expand the OR range while inside the 9:30–10:30 window
+if in_or_window
+    if na(or_open)
+        or_open := open
+    or_high := na(or_high) ? high : math.max(or_high, high)
+    or_low  := na(or_low)  ? low  : math.min(or_low,  low)
+
+// Lock OR values at the first bar at or after 10:30
+if after_or and not or_ready and not na(or_open)
+    or_bull  := close >= or_open       // green candle → CALL, red → PUT
+    or_mid   := (or_high + or_low) / 2.0
+    or_ready := true
+
+// ─── Entry Logic ───────────────────────────────────────────────────────────────
+// Setup requires the 50% level to be above the previous day high
+setup_valid  = or_ready and or_mid > prev_day_high
+
+// Signal fires when price touches (wicks through) the 50% level after OR is complete
+touches_mid  = or_ready and after_or and high >= or_mid and low <= or_mid
+
+call_entry = show_signals and setup_valid and touches_mid and or_bull      and not signaled
+put_entry  = show_signals and setup_valid and touches_mid and not or_bull  and not signaled
+
+if (call_entry or put_entry) and signal_once
+    signaled := true
+
+// ─── Plots ─────────────────────────────────────────────────────────────────────
+// 50% midpoint — color reflects OR direction
+plot(or_ready ? or_mid  : na, "OR 50% Mid",
+     color=or_bull ? call_col : put_col, linewidth=2, style=plot.style_linebr)
+
+// OR high and low bands
+plot(show_or_lvls and or_ready ? or_high : na, "OR High",
+     color=color.new(color.gray, 30), linewidth=1, style=plot.style_linebr)
+plot(show_or_lvls and or_ready ? or_low  : na, "OR Low",
+     color=color.new(color.gray, 30), linewidth=1, style=plot.style_linebr)
+
+// Previous day high
+plot(show_pdh and market_open ? prev_day_high : na, "Prev Day High",
+     color=pdh_col, linewidth=1, style=plot.style_dashed)
+
+// Entry signals
+plotshape(call_entry, "CALL Entry", shape.triangleup,   location.belowbar,
+          call_col, size=size.normal, text="CALL", textcolor=color.white)
+plotshape(put_entry,  "PUT Entry",  shape.triangledown,  location.abovebar,
+          put_col,  size=size.normal, text="PUT",  textcolor=color.white)
+
+// OR window background tint
+bgcolor(in_or_window ? color.new(color.yellow, 88) : na, title="OR Window")
+
+// ─── Dashboard Table ───────────────────────────────────────────────────────────
+var table dash = table.new(position.top_right, 2, 5,
+                           bgcolor=color.new(color.black, 65),
+                           border_color=color.new(color.gray, 50), border_width=1,
+                           frame_color=color.new(color.gray, 30), frame_width=1)
+
+if barstate.islast
+    // Headers
+    table.cell(dash, 0, 0, "OR Strategy",
+               text_color=color.white, text_size=size.small, bgcolor=color.new(color.navy, 30))
+    table.cell(dash, 1, 0, "",
+               text_color=color.white, text_size=size.small, bgcolor=color.new(color.navy, 30))
+
+    // Bias
+    bias_txt = not or_ready ? "Waiting for OR..." : (or_bull ? "CALL  (Green OR)" : "PUT   (Red OR)")
+    bias_col = not or_ready ? color.gray            : (or_bull ? color.lime          : color.red)
+    table.cell(dash, 0, 1, "Bias",       text_color=color.silver, text_size=size.small)
+    table.cell(dash, 1, 1, bias_txt,     text_color=bias_col,     text_size=size.small)
+
+    // OR 50% level
+    mid_txt = or_ready ? str.tostring(math.round(or_mid, 2)) : "—"
+    table.cell(dash, 0, 2, "OR 50% Lvl", text_color=color.silver,  text_size=size.small)
+    table.cell(dash, 1, 2, mid_txt,       text_color=color.yellow,  text_size=size.small)
+
+    // Prev Day High
+    table.cell(dash, 0, 3, "Prev Day Hi", text_color=color.silver, text_size=size.small)
+    table.cell(dash, 1, 3, str.tostring(math.round(prev_day_high, 2)),
+               text_color=color.aqua, text_size=size.small)
+
+    // Setup validity
+    valid_txt = or_ready ? (setup_valid ? "VALID — 50% > PDH" : "INVALID — 50% below PDH") : "—"
+    valid_col = or_ready ? (setup_valid ? color.lime : color.red) : color.gray
+    table.cell(dash, 0, 4, "Setup",      text_color=color.silver, text_size=size.small)
+    table.cell(dash, 1, 4, valid_txt,    text_color=valid_col,    text_size=size.small)
