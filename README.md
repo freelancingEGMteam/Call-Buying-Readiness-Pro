@@ -23,10 +23,10 @@ model.
 5. The EA enters the reversal **on a tick-volume spike**:
    - Sweep of **Asia high** → **SELL**
    - Sweep of **Asia low** → **BUY**
-6. **20-minute time-stop**: if the trade isn't in profit after 20 minutes, it's
-   closed. Once floating profit reaches **$10** the stop jumps to **breakeven**,
-   and a **money-based trailing stop** then trails **$10 behind** price (configurable).
-   A **partial take-profit** closes part of the position at **1R**.
+6. **Trade management:** once floating profit reaches **$10** the stop jumps to
+   **breakeven**, and a **money-based trailing stop** then trails **$10 behind**
+   price (configurable). A **partial take-profit** closes part of the position at
+   **1R**. Risk is otherwise capped by the stop-loss.
 7. **PDH / PDL** (previous **D1** high/low) are used as **take-profit targets** —
    these are separate from the Asia range, which is only the entry trigger.
 8. The whole book is **force-flat by 12:30 ET**, or earlier if the day hits
@@ -96,7 +96,6 @@ Adjust **`InpServerToETOffset`** until the printed ET matches actual New York ti
 | `InpMaxRiskMoney` | **Hard $ risk cap per trade (default 50)** |
 | `InpMinRewardRatio` | Skip the setup below this reward:risk (default 1.0) |
 | `InpTPMode` | `TP_PDH_PDL` (target prev-day levels) or `TP_FIXED_RR` |
-| `InpTimeStopMinutes` | Close-if-not-profitable timer (default 20) |
 | `InpBreakevenMoney` | Move SL to breakeven once floating profit hits this $ (default 10) |
 | `InpBreakevenBufferPoints` | Points locked beyond entry at breakeven (covers spread) |
 | `InpUsePartialTP` / `InpPartialAtRR` / `InpPartialPercent` | Close part of the position at 1R (default 50%) |

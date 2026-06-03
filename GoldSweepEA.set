@@ -36,8 +36,6 @@ InpTPMode=0
 InpRewardRatio=2.0
 InpMinRewardRatio=1.0
 ; --- Trade management ---
-InpTimeStopMinutes=20
-InpMinProfitPoints=20
 InpBreakevenMoney=10.0
 InpBreakevenBufferPoints=10
 InpUseTrailing=true

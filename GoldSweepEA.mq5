@@ -8,7 +8,7 @@
 //|    3. NY morning SWEEPS the Asia high (or low) by a small amount. |
 //|    4. Price shifts market structure (MSS) back the other way.     |
 //|    5. Enter the reversal on high (tick) volume.                   |
-//|    6. 20-minute time-stop, then a trailing stop manages the trade.|
+//|    6. Breakeven at +$10, then a trailing stop manages the trade.   |
 //|    PDH/PDL (previous D1 high/low) are used as TP targets.         |
 //|                                                                  |
 //|  NOTE: Spot gold has no real traded volume - the "volume" filter  |
@@ -64,8 +64,6 @@ input double InpRewardRatio         = 2.0;   // Reward:risk (TP_FIXED_RR / PDL f
 input double InpMinRewardRatio      = 1.0;   // Skip the setup if TP gives less than this reward:risk
 
 input group "=== Trade management ==="
-input int    InpTimeStopMinutes     = 20;    // Close if not in profit after N minutes
-input int    InpMinProfitPoints     = 20;    // "In profit" threshold for the time-stop (points)
 input double InpBreakevenMoney      = 10.0;  // Move SL to breakeven once floating profit reaches this ($)
 input int    InpBreakevenBufferPoints = 10;  // Points locked beyond entry at breakeven (covers spread; 0 = exact)
 input bool   InpUseTrailing         = true;  // Enable trailing stop
@@ -502,7 +500,7 @@ bool PreTradeChecks()
 }
 
 //==================================================================
-//  POSITION MANAGEMENT (time-stop + trailing)
+//  POSITION MANAGEMENT (partial + breakeven + trailing)
 //==================================================================
 void ManageOpenPosition()
 {
@@ -513,7 +511,6 @@ void ManageOpenPosition()
    double open    = PositionGetDouble(POSITION_PRICE_OPEN);
    double sl      = PositionGetDouble(POSITION_SL);
    double tp      = PositionGetDouble(POSITION_TP);
-   datetime otime = (datetime)PositionGetInteger(POSITION_TIME);
    double bid     = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    double ask     = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
 
@@ -535,21 +532,6 @@ void ManageOpenPosition()
                PrintFormat("Partial TP: closed %.2f of %.2f lots at %.1fR", closeVol, vol, InpPartialAtRR);
          }
          g_partialDone = true; // don't retry, even if the volume was too small to split
-      }
-   }
-
-   // ----- 10-minute time-stop -----
-   if(InpTimeStopMinutes > 0 &&
-      (TimeCurrent() - otime) >= InpTimeStopMinutes * 60)
-   {
-      double profitPts = (type == POSITION_TYPE_BUY)
-                         ? (bid - open) / g_point
-                         : (open - ask) / g_point;
-      if(profitPts < InpMinProfitPoints)
-      {
-         trade.PositionClose(_Symbol);
-         PrintFormat("Time-stop hit (%d min, %.0f pts) -> closed", InpTimeStopMinutes, profitPts);
-         return;
       }
    }
 
