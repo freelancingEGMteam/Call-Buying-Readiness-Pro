@@ -68,8 +68,12 @@ input int    InpMinProfitPoints     = 20;    // "In profit" threshold for the ti
 input double InpBreakevenMoney      = 10.0;  // Move SL to breakeven once floating profit reaches this ($)
 input int    InpBreakevenBufferPoints = 10;  // Points locked beyond entry at breakeven (covers spread; 0 = exact)
 input bool   InpUseTrailing         = true;  // Enable trailing stop
-input int    InpTrailActivatePoints = 150;   // Profit (points) before trailing engages
-input int    InpTrailDistancePoints = 100;   // Trail distance behind price (points)
+enum TrailMode { TRAIL_MONEY=0, TRAIL_POINTS=1 };
+input TrailMode InpTrailMode        = TRAIL_MONEY; // Trailing distance mode
+input double InpTrailMoneyActivate  = 10.0;  // Profit ($) before money-trailing engages (TRAIL_MONEY)
+input double InpTrailMoneyDistance  = 10.0;  // Trail this many $ behind current price (TRAIL_MONEY)
+input int    InpTrailActivatePoints = 150;   // Profit (points) before trailing engages (TRAIL_POINTS)
+input int    InpTrailDistancePoints = 100;   // Trail distance behind price (points) (TRAIL_POINTS)
 input int    InpTrailStepPoints     = 20;    // Minimum SL improvement step (points)
 
 input group "=== Guards ==="
@@ -474,28 +478,53 @@ void ManageOpenPosition()
    // ----- trailing stop (continues from breakeven) -----
    if(!InpUseTrailing) return;
 
+   double step = InpTrailStepPoints * g_point;
+
+   // resolve activation + trail distance (price) from the selected mode
+   bool   active = false;
+   double dist   = 0.0;
+   if(InpTrailMode == TRAIL_MONEY)
+   {
+      active = (PositionGetDouble(POSITION_PROFIT) >= InpTrailMoneyActivate);
+      dist   = MoneyToPriceDistance(InpTrailMoneyDistance);
+   }
+   else
+   {
+      double profitPts = (type == POSITION_TYPE_BUY) ? (bid - open) / g_point
+                                                     : (open - ask) / g_point;
+      active = (profitPts >= InpTrailActivatePoints);
+      dist   = InpTrailDistancePoints * g_point;
+   }
+   if(!active || dist <= 0.0) return;
+
    if(type == POSITION_TYPE_BUY)
    {
-      double profitPts = (bid - open) / g_point;
-      if(profitPts >= InpTrailActivatePoints)
-      {
-         double newSL = bid - InpTrailDistancePoints * g_point;
-         if(newSL > open && (sl == 0.0 || newSL - sl >= InpTrailStepPoints * g_point) &&
-            bid - newSL >= g_stopsLevel)
-            trade.PositionModify(_Symbol, NormalizeDouble(newSL, g_digits), tp);
-      }
+      double newSL = bid - dist;
+      if(newSL > open && (sl == 0.0 || newSL - sl >= step) && bid - newSL >= g_stopsLevel)
+         trade.PositionModify(_Symbol, NormalizeDouble(newSL, g_digits), tp);
    }
    else if(type == POSITION_TYPE_SELL)
    {
-      double profitPts = (open - ask) / g_point;
-      if(profitPts >= InpTrailActivatePoints)
-      {
-         double newSL = ask + InpTrailDistancePoints * g_point;
-         if(newSL < open && (sl == 0.0 || sl - newSL >= InpTrailStepPoints * g_point) &&
-            newSL - ask >= g_stopsLevel)
-            trade.PositionModify(_Symbol, NormalizeDouble(newSL, g_digits), tp);
-      }
+      double newSL = ask + dist;
+      if(newSL < open && (sl == 0.0 || sl - newSL >= step) && newSL - ask >= g_stopsLevel)
+         trade.PositionModify(_Symbol, NormalizeDouble(newSL, g_digits), tp);
    }
+}
+
+//------------------------------------------------------------------
+//  Convert a $ amount into a price distance for the OPEN position
+//  (position must already be selected by the caller)
+//------------------------------------------------------------------
+double MoneyToPriceDistance(double money)
+{
+   if(money <= 0.0) return 0.0;
+   double lots      = PositionGetDouble(POSITION_VOLUME);
+   double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+   double tickSize  = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+   if(lots <= 0.0 || tickValue <= 0.0 || tickSize <= 0.0) return 0.0;
+   double valuePerPrice = lots * tickValue / tickSize; // $ per 1.0 of price move
+   if(valuePerPrice <= 0.0) return 0.0;
+   return money / valuePerPrice;
 }
 
 //==================================================================

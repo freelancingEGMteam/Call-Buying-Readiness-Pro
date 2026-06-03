@@ -25,7 +25,7 @@ model.
    - Sweep of **Asia low** → **BUY**
 6. **10-minute time-stop**: if the trade isn't in profit after 10 minutes, it's
    closed. Once floating profit reaches **$10** the stop jumps to **breakeven**,
-   and a **trailing stop** rides the rest of the move.
+   and a **money-based trailing stop** then trails **$10 behind** price (configurable).
 7. **PDH / PDL** (previous **D1** high/low) are used as **take-profit targets** —
    these are separate from the Asia range, which is only the entry trigger.
 
@@ -89,7 +89,10 @@ Adjust **`InpServerToETOffset`** until the printed ET matches actual New York ti
 | `InpTimeStopMinutes` | Close-if-not-profitable timer (default 10) |
 | `InpBreakevenMoney` | Move SL to breakeven once floating profit hits this $ (default 10) |
 | `InpBreakevenBufferPoints` | Points locked beyond entry at breakeven (covers spread) |
-| `InpUseTrailing` + trail points | Trailing-stop behaviour (continues after breakeven) |
+| `InpUseTrailing` | Enable trailing stop (continues after breakeven) |
+| `InpTrailMode` | `TRAIL_MONEY` ($-based) or `TRAIL_POINTS` |
+| `InpTrailMoneyActivate` / `InpTrailMoneyDistance` | Engage after $X profit, trail $Y behind price (default $10 / $10) |
+| `InpTrailActivatePoints` / `InpTrailDistancePoints` / `InpTrailStepPoints` | Points-mode trailing |
 | `InpMaxTradesPerDay` | Max entries per session day (default 2) |
 | `InpMaxLossesPerDay` | Halt trading after this many losing trades (default 2) |
 | `InpCloseTerminalOnMaxLoss` | Close MetaTrader when the loss limit is hit (else warn + halt) |
