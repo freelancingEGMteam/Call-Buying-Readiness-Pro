@@ -61,6 +61,7 @@ input int    InpSLBufferPoints      = 100;   // Stop-loss padding beyond the swe
 enum TPMode { TP_PDH_PDL=0, TP_FIXED_RR=1 };
 input TPMode InpTPMode              = TP_PDH_PDL; // Take-profit target mode
 input double InpRewardRatio         = 2.0;   // Reward:risk (TP_FIXED_RR / PDL fallback)
+input double InpMinRewardRatio      = 1.0;   // Skip the setup if TP gives less than this reward:risk
 
 input group "=== Trade management ==="
 input int    InpTimeStopMinutes     = 10;    // Close if not in profit after N minutes
@@ -75,11 +76,20 @@ input double InpTrailMoneyDistance  = 10.0;  // Trail this many $ behind current
 input int    InpTrailActivatePoints = 150;   // Profit (points) before trailing engages (TRAIL_POINTS)
 input int    InpTrailDistancePoints = 100;   // Trail distance behind price (points) (TRAIL_POINTS)
 input int    InpTrailStepPoints     = 20;    // Minimum SL improvement step (points)
+input bool   InpUsePartialTP        = true;  // Take partial profit at InpPartialAtRR
+input double InpPartialAtRR          = 1.0;  // R-multiple at which to take the partial
+input double InpPartialPercent       = 50.0; // % of the position to close at the partial
 
 input group "=== Guards ==="
 input int    InpMaxTradesPerDay     = 2;     // Max entries per session day
 input int    InpMaxLossesPerDay     = 2;     // Halt trading for the day after this many losing trades
 input bool   InpCloseTerminalOnMaxLoss = false; // Close MetaTrader when loss limit hit (else just warn + halt)
+input double InpDailyProfitTarget   = 100.0; // Close all + halt once day P/L reaches +$ (0 = off)
+input double InpMaxDailyLoss        = 100.0; // Close all + halt once day P/L reaches -$ (0 = off)
+input int    InpSessionCloseHourET  = 12;    // Force-close all positions at this ET hour...
+input int    InpSessionCloseMinET   = 30;    // ...and minute (e.g. 12:30 ET)
+input bool   InpSkipMonday          = true;  // No trades on Monday
+input bool   InpSkipFriday          = true;  // No trades on Friday
 input int    InpMaxSpreadPoints     = 60;    // Skip entries if spread exceeds this (points)
 input int    InpSlippagePoints      = 20;    // Max deviation on order send (points)
 input long   InpMagicNumber         = 778899;// EA magic number
@@ -116,6 +126,10 @@ bool     g_longDone = false;
 int      g_tradesToday = 0;
 int      g_lossesToday = 0;
 bool     g_lossAlerted = false;
+double   g_realizedToday = 0.0;   // realized price-based P/L this session day
+bool     g_haltedToday = false;   // no more entries this session day
+double   g_entryRisk = 0.0;       // initial SL distance (price) of the open trade (for R-multiples)
+bool     g_partialDone = false;   // partial TP already taken on the current position
 datetime g_lastBarTime = 0;
 
 //==================================================================
@@ -159,16 +173,18 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
    if(entry != DEAL_ENTRY_OUT && entry != DEAL_ENTRY_INOUT) return; // only closes
 
    double profit = HistoryDealGetDouble(trans.deal, DEAL_PROFIT); // price-based P/L only
+   g_realizedToday += profit;                                     // track day P/L (price-based)
 
    if(profit >= 0.0) return; // not a losing trade
 
    g_lossesToday++;
-   PrintFormat("Losing trade closed (P/L %.2f). Losses today: %d/%d",
-               profit, g_lossesToday, InpMaxLossesPerDay);
+   PrintFormat("Losing trade closed (P/L %.2f). Losses today: %d/%d. Day P/L=%.2f",
+               profit, g_lossesToday, InpMaxLossesPerDay, g_realizedToday);
 
    if(g_lossesToday >= InpMaxLossesPerDay && !g_lossAlerted)
    {
       g_lossAlerted = true;
+      g_haltedToday = true;
       string msg = StringFormat("GoldSweepEA: %d losing trades today - trading HALTED for the session.",
                                 g_lossesToday);
       Print(msg);
@@ -194,8 +210,14 @@ void OnTick()
       g_sessionDay = sd;
    }
 
+   // --- daily targets / session cutoff (may force-close + halt) ---
+   CheckDailyStops();
+
    // --- manage any open position every tick ---
    ManageOpenPosition();
+
+   // --- reset the partial-TP flag whenever we are flat ---
+   if(!HasOpenPosition()) g_partialDone = false;
 
    // --- run the bar-driven logic only on a new M5 bar ---
    datetime bt = iTime(_Symbol, PERIOD_M5, 0);
@@ -203,6 +225,41 @@ void OnTick()
    g_lastBarTime = bt;
 
    OnNewBar();
+}
+
+//------------------------------------------------------------------
+//  Daily profit target, max daily loss, and session time cutoff.
+//  Active only during the trading portion of the ET day so it never
+//  trips overnight / during the next session's Asia tracking.
+//------------------------------------------------------------------
+void CheckDailyStops()
+{
+   int nowMin = ETMinutes(ToET(TimeCurrent()));
+   bool activePart = (nowMin >= ToMinutes(InpNYStartHour, InpNYStartMin) &&
+                      nowMin <  ToMinutes(InpDayResetHourET, 0));
+   if(!activePart) return;
+
+   double floating = HasOpenPosition() ? PositionGetDouble(POSITION_PROFIT) : 0.0;
+   double dayPL    = g_realizedToday + floating;
+
+   string reason = "";
+   if(nowMin >= ToMinutes(InpSessionCloseHourET, InpSessionCloseMinET))
+      reason = "session time cutoff";
+   else if(InpDailyProfitTarget > 0.0 && dayPL >= InpDailyProfitTarget)
+      reason = StringFormat("daily profit target hit (%.2f)", dayPL);
+   else if(InpMaxDailyLoss > 0.0 && dayPL <= -InpMaxDailyLoss)
+      reason = StringFormat("max daily loss hit (%.2f)", dayPL);
+
+   if(reason == "") return;
+
+   if(HasOpenPosition())
+      trade.PositionClose(_Symbol);
+
+   if(!g_haltedToday)
+   {
+      g_haltedToday = true;
+      PrintFormat("Trading HALTED for the session - %s.", reason);
+   }
 }
 
 //------------------------------------------------------------------
@@ -355,12 +412,21 @@ void OpenShort()
       tp = bid - InpRewardRatio * risk;
    if(bid - tp < g_stopsLevel) tp = bid - g_stopsLevel;
 
+   // minimum reward:risk filter
+   if((bid - tp) < InpMinRewardRatio * risk)
+   {
+      PrintFormat("Skip SHORT: reward:risk %.2f < min %.2f", (bid - tp) / risk, InpMinRewardRatio);
+      return;
+   }
+
    double lots = CalcLots(risk);
    if(lots <= 0) return;
 
    if(trade.Sell(lots, _Symbol, 0.0, NormalizeDouble(sl, g_digits), NormalizeDouble(tp, g_digits), InpComment))
    {
       g_tradesToday++;
+      g_entryRisk   = risk;
+      g_partialDone = false;
       PrintFormat("SHORT %.2f lots @%.2f SL=%.2f TP=%.2f (sweep high %.2f)",
                   lots, bid, sl, tp, g_shortExtreme);
    }
@@ -387,12 +453,21 @@ void OpenLong()
       tp = ask + InpRewardRatio * risk;
    if(tp - ask < g_stopsLevel) tp = ask + g_stopsLevel;
 
+   // minimum reward:risk filter
+   if((tp - ask) < InpMinRewardRatio * risk)
+   {
+      PrintFormat("Skip LONG: reward:risk %.2f < min %.2f", (tp - ask) / risk, InpMinRewardRatio);
+      return;
+   }
+
    double lots = CalcLots(risk);
    if(lots <= 0) return;
 
    if(trade.Buy(lots, _Symbol, 0.0, NormalizeDouble(sl, g_digits), NormalizeDouble(tp, g_digits), InpComment))
    {
       g_tradesToday++;
+      g_entryRisk   = risk;
+      g_partialDone = false;
       PrintFormat("LONG %.2f lots @%.2f SL=%.2f TP=%.2f (sweep low %.2f)",
                   lots, ask, sl, tp, g_longExtreme);
    }
@@ -405,9 +480,16 @@ void OpenLong()
 //------------------------------------------------------------------
 bool PreTradeChecks()
 {
+   if(g_haltedToday)                        return false;  // loss/profit/cutoff halt
    if(HasOpenPosition())                   return false;
    if(g_tradesToday >= InpMaxTradesPerDay)  return false;
    if(g_lossesToday >= InpMaxLossesPerDay)  return false;  // daily loss limit reached
+
+   // weekday filter (ET trading day)
+   MqlDateTime mdt;
+   TimeToStruct(ToET(TimeCurrent()), mdt);
+   if(InpSkipMonday && mdt.day_of_week == MONDAY) return false;
+   if(InpSkipFriday && mdt.day_of_week == FRIDAY) return false;
 
    double spread = (SymbolInfoDouble(_Symbol, SYMBOL_ASK) -
                     SymbolInfoDouble(_Symbol, SYMBOL_BID)) / g_point;
@@ -434,6 +516,27 @@ void ManageOpenPosition()
    datetime otime = (datetime)PositionGetInteger(POSITION_TIME);
    double bid     = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    double ask     = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+
+   // ----- partial take-profit at InpPartialAtRR -----
+   if(InpUsePartialTP && !g_partialDone && g_entryRisk > 0.0)
+   {
+      double target = (type == POSITION_TYPE_BUY)
+                      ? open + InpPartialAtRR * g_entryRisk
+                      : open - InpPartialAtRR * g_entryRisk;
+      bool hit = (type == POSITION_TYPE_BUY) ? (bid >= target) : (ask <= target);
+      if(hit)
+      {
+         double vol      = PositionGetDouble(POSITION_VOLUME);
+         double minLot   = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+         double closeVol = NormalizeLot(vol * InpPartialPercent / 100.0);
+         if(closeVol >= minLot && (vol - closeVol) >= minLot)
+         {
+            if(trade.PositionClosePartial(_Symbol, closeVol))
+               PrintFormat("Partial TP: closed %.2f of %.2f lots at %.1fR", closeVol, vol, InpPartialAtRR);
+         }
+         g_partialDone = true; // don't retry, even if the volume was too small to split
+      }
+   }
 
    // ----- 10-minute time-stop -----
    if(InpTimeStopMinutes > 0 &&
@@ -615,6 +718,8 @@ void ResetDay()
    g_tradesToday = 0;
    g_lossesToday = 0;
    g_lossAlerted = false;
+   g_realizedToday = 0.0;
+   g_haltedToday = false;
 
    // Previous completed daily candle = PDH / PDL
    g_pdh = iHigh(_Symbol, PERIOD_D1, 1);

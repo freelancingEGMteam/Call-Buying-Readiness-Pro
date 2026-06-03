@@ -26,17 +26,24 @@ model.
 6. **10-minute time-stop**: if the trade isn't in profit after 10 minutes, it's
    closed. Once floating profit reaches **$10** the stop jumps to **breakeven**,
    and a **money-based trailing stop** then trails **$10 behind** price (configurable).
+   A **partial take-profit** closes part of the position at **1R**.
 7. **PDH / PDL** (previous **D1** high/low) are used as **take-profit targets** —
    these are separate from the Asia range, which is only the entry trigger.
+8. The whole book is **force-flat by 12:30 ET**, or earlier if the day hits
+   **+$100 profit** or **−$100 loss**.
 
 ### Risk rules baked in
 - **Hard cap: never risk more than `$50` per trade** (`InpMaxRiskMoney`). If even
   the minimum lot would risk more, the trade is skipped.
+- **Hard cap: never risk more than `$50` per trade**; minimum **1:1 reward:risk**
+  or the setup is skipped.
 - **Only one position open at a time.**
-- **No entries after 10:30 ET** (entries fire only inside the NY window).
+- **No entries after 10:30 ET**; **no trades on Monday or Friday**.
 - **Max 2 trades per session** (`InpMaxTradesPerDay`).
-- **2 losing trades halts trading for the day** (`InpMaxLossesPerDay`) — pops an
-  alert, and can optionally close MetaTrader (`InpCloseTerminalOnMaxLoss`).
+- **2 losing trades halts the day** (`InpMaxLossesPerDay`) — alerts, and can
+  optionally close MetaTrader (`InpCloseTerminalOnMaxLoss`).
+- **Daily circuit breaker:** force-flat + halt at **12:30 ET**, or on **+$100**
+  day profit / **−$100** day loss.
 - Spread filter, broker stop-level handling.
 
 ---
@@ -85,10 +92,12 @@ Adjust **`InpServerToETOffset`** until the printed ET matches actual New York ti
 | `InpLotMode` | `LOT_FIXED` or `LOT_RISK_PCT` |
 | `InpRiskPercent` | Risk % of balance per trade (risk mode) |
 | `InpMaxRiskMoney` | **Hard $ risk cap per trade (default 50)** |
+| `InpMinRewardRatio` | Skip the setup below this reward:risk (default 1.0) |
 | `InpTPMode` | `TP_PDH_PDL` (target prev-day levels) or `TP_FIXED_RR` |
 | `InpTimeStopMinutes` | Close-if-not-profitable timer (default 10) |
 | `InpBreakevenMoney` | Move SL to breakeven once floating profit hits this $ (default 10) |
 | `InpBreakevenBufferPoints` | Points locked beyond entry at breakeven (covers spread) |
+| `InpUsePartialTP` / `InpPartialAtRR` / `InpPartialPercent` | Close part of the position at 1R (default 50%) |
 | `InpUseTrailing` | Enable trailing stop (continues after breakeven) |
 | `InpTrailMode` | `TRAIL_MONEY` ($-based) or `TRAIL_POINTS` |
 | `InpTrailMoneyActivate` / `InpTrailMoneyDistance` | Engage after $X profit, trail $Y behind price (default $10 / $10) |
@@ -96,6 +105,9 @@ Adjust **`InpServerToETOffset`** until the printed ET matches actual New York ti
 | `InpMaxTradesPerDay` | Max entries per session day (default 2) |
 | `InpMaxLossesPerDay` | Halt trading after this many losing trades (default 2) |
 | `InpCloseTerminalOnMaxLoss` | Close MetaTrader when the loss limit is hit (else warn + halt) |
+| `InpDailyProfitTarget` / `InpMaxDailyLoss` | Force-flat + halt at +$ / −$ day P/L (default 100 / 100) |
+| `InpSessionCloseHourET` / `InpSessionCloseMinET` | Force-close all positions at this ET time (default 12:30) |
+| `InpSkipMonday` / `InpSkipFriday` | Skip Monday / Friday trading (default on) |
 | `InpMaxSpreadPoints` | Skip entries when spread is too wide |
 
 > **Points note:** values are in broker *points*. On a 2-digit gold feed,
