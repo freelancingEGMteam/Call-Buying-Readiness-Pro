@@ -33,7 +33,11 @@ model.
 - **Hard cap: never risk more than `$50` per trade** (`InpMaxRiskMoney`). If even
   the minimum lot would risk more, the trade is skipped.
 - **Only one position open at a time.**
-- Daily trade cap, spread filter, broker stop-level handling.
+- **No entries after 10:30 ET** (entries fire only inside the NY window).
+- **Max 2 trades per session** (`InpMaxTradesPerDay`).
+- **2 losing trades halts trading for the day** (`InpMaxLossesPerDay`) — pops an
+  alert, and can optionally close MetaTrader (`InpCloseTerminalOnMaxLoss`).
+- Spread filter, broker stop-level handling.
 
 ---
 
@@ -86,7 +90,10 @@ Adjust **`InpServerToETOffset`** until the printed ET matches actual New York ti
 | `InpBreakevenMoney` | Move SL to breakeven once floating profit hits this $ (default 10) |
 | `InpBreakevenBufferPoints` | Points locked beyond entry at breakeven (covers spread) |
 | `InpUseTrailing` + trail points | Trailing-stop behaviour (continues after breakeven) |
-| `InpMaxTradesPerDay`, `InpMaxSpreadPoints` | Guards |
+| `InpMaxTradesPerDay` | Max entries per session day (default 2) |
+| `InpMaxLossesPerDay` | Halt trading after this many losing trades (default 2) |
+| `InpCloseTerminalOnMaxLoss` | Close MetaTrader when the loss limit is hit (else warn + halt) |
+| `InpMaxSpreadPoints` | Skip entries when spread is too wide |
 
 > **Points note:** values are in broker *points*. On a 2-digit gold feed,
 > 100 points = $1.00 of price. If your broker quotes gold with 3 digits, scale

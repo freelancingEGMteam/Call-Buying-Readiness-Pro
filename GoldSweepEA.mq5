@@ -74,6 +74,8 @@ input int    InpTrailStepPoints     = 20;    // Minimum SL improvement step (poi
 
 input group "=== Guards ==="
 input int    InpMaxTradesPerDay     = 2;     // Max entries per session day
+input int    InpMaxLossesPerDay     = 2;     // Halt trading for the day after this many losing trades
+input bool   InpCloseTerminalOnMaxLoss = false; // Close MetaTrader when loss limit hit (else just warn + halt)
 input int    InpMaxSpreadPoints     = 60;    // Skip entries if spread exceeds this (points)
 input int    InpSlippagePoints      = 20;    // Max deviation on order send (points)
 input long   InpMagicNumber         = 778899;// EA magic number
@@ -108,6 +110,8 @@ double   g_longSwingHigh = 0.0;      // protected high; close above = MSS up
 bool     g_longDone = false;
 
 int      g_tradesToday = 0;
+int      g_lossesToday = 0;
+bool     g_lossAlerted = false;
 datetime g_lastBarTime = 0;
 
 //==================================================================
@@ -132,6 +136,48 @@ int OnInit()
 }
 
 void OnDeinit(const int reason) {}
+
+//------------------------------------------------------------------
+//  Trade events: count losing closes, enforce the daily loss limit
+//------------------------------------------------------------------
+void OnTradeTransaction(const MqlTradeTransaction &trans,
+                        const MqlTradeRequest &request,
+                        const MqlTradeResult &result)
+{
+   if(trans.type != TRADE_TRANSACTION_DEAL_ADD) return;
+   if(trans.deal == 0) return;
+   if(!HistoryDealSelect(trans.deal)) return;
+
+   if(HistoryDealGetInteger(trans.deal, DEAL_MAGIC) != InpMagicNumber) return;
+   if(HistoryDealGetString(trans.deal, DEAL_SYMBOL) != _Symbol) return;
+
+   long entry = HistoryDealGetInteger(trans.deal, DEAL_ENTRY);
+   if(entry != DEAL_ENTRY_OUT && entry != DEAL_ENTRY_INOUT) return; // only closes
+
+   double netPL = HistoryDealGetDouble(trans.deal, DEAL_PROFIT)
+                + HistoryDealGetDouble(trans.deal, DEAL_SWAP)
+                + HistoryDealGetDouble(trans.deal, DEAL_COMMISSION);
+
+   if(netPL >= 0.0) return; // not a losing trade
+
+   g_lossesToday++;
+   PrintFormat("Losing trade closed (net %.2f). Losses today: %d/%d",
+               netPL, g_lossesToday, InpMaxLossesPerDay);
+
+   if(g_lossesToday >= InpMaxLossesPerDay && !g_lossAlerted)
+   {
+      g_lossAlerted = true;
+      string msg = StringFormat("GoldSweepEA: %d losing trades today - trading HALTED for the session.",
+                                g_lossesToday);
+      Print(msg);
+      Alert(msg);
+      if(InpCloseTerminalOnMaxLoss)
+      {
+         Print("InpCloseTerminalOnMaxLoss=true -> closing MetaTrader.");
+         TerminalClose(0);
+      }
+   }
+}
 
 //==================================================================
 //  MAIN
@@ -356,8 +402,9 @@ void OpenLong()
 //------------------------------------------------------------------
 bool PreTradeChecks()
 {
-   if(HasOpenPosition())                return false;
-   if(g_tradesToday >= InpMaxTradesPerDay) return false;
+   if(HasOpenPosition())                   return false;
+   if(g_tradesToday >= InpMaxTradesPerDay)  return false;
+   if(g_lossesToday >= InpMaxLossesPerDay)  return false;  // daily loss limit reached
 
    double spread = (SymbolInfoDouble(_Symbol, SYMBOL_ASK) -
                     SymbolInfoDouble(_Symbol, SYMBOL_BID)) / g_point;
@@ -538,6 +585,8 @@ void ResetDay()
    g_shortSwept = false; g_shortDone = false; g_shortExtreme = 0.0; g_shortSwingLow = 0.0;
    g_longSwept  = false; g_longDone  = false; g_longExtreme  = 0.0; g_longSwingHigh = 0.0;
    g_tradesToday = 0;
+   g_lossesToday = 0;
+   g_lossAlerted = false;
 
    // Previous completed daily candle = PDH / PDL
    g_pdh = iHigh(_Symbol, PERIOD_D1, 1);
