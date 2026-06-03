@@ -158,15 +158,13 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
    long entry = HistoryDealGetInteger(trans.deal, DEAL_ENTRY);
    if(entry != DEAL_ENTRY_OUT && entry != DEAL_ENTRY_INOUT) return; // only closes
 
-   double netPL = HistoryDealGetDouble(trans.deal, DEAL_PROFIT)
-                + HistoryDealGetDouble(trans.deal, DEAL_SWAP)
-                + HistoryDealGetDouble(trans.deal, DEAL_COMMISSION);
+   double profit = HistoryDealGetDouble(trans.deal, DEAL_PROFIT); // price-based P/L only
 
-   if(netPL >= 0.0) return; // not a losing trade
+   if(profit >= 0.0) return; // not a losing trade
 
    g_lossesToday++;
-   PrintFormat("Losing trade closed (net %.2f). Losses today: %d/%d",
-               netPL, g_lossesToday, InpMaxLossesPerDay);
+   PrintFormat("Losing trade closed (P/L %.2f). Losses today: %d/%d",
+               profit, g_lossesToday, InpMaxLossesPerDay);
 
    if(g_lossesToday >= InpMaxLossesPerDay && !g_lossAlerted)
    {
@@ -242,8 +240,9 @@ void OnNewBar()
    if(g_asiaDone &&
       InWindowET(et1, InpNYStartHour, InpNYStartMin, InpNYEndHour, InpNYEndMin))
    {
-      if(InpEnableShorts) ProcessShort(high1, low1, close1);
-      if(InpEnableLongs)  ProcessLong(high1, low1, close1);
+      // never run setup logic while a trade is open -> guarantees one position at a time
+      if(InpEnableShorts && !HasOpenPosition()) ProcessShort(high1, low1, close1);
+      if(InpEnableLongs  && !HasOpenPosition()) ProcessLong(high1, low1, close1);
    }
 }
 
