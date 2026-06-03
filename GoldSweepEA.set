@@ -1,0 +1,66 @@
+; GoldSweepEA preset - all current defaults
+; Load in MT5: EA inputs dialog -> "Load", or Strategy Tester -> Inputs -> "Load".
+; REMINDER: calibrate InpServerToETOffset to your broker (see the Experts log).
+;
+; --- Time / Sessions (ET) ---
+InpServerToETOffset=-7
+InpDayResetHourET=17
+InpAsiaStartHour=20
+InpAsiaStartMin=0
+InpAsiaEndHour=0
+InpAsiaEndMin=0
+InpLondonStartHour=2
+InpLondonStartMin=0
+InpLondonEndHour=5
+InpLondonEndMin=0
+InpNYStartHour=8
+InpNYStartMin=0
+InpNYEndHour=10
+InpNYEndMin=30
+; --- Setup detection ---
+InpSweepBufferPoints=50
+InpLondonBreakBuffer=30
+InpEnableShorts=true
+InpEnableLongs=true
+; --- Volume (tick) filter ---
+InpUseVolumeFilter=true
+InpVolLookback=20
+InpVolMultiplier=1.3
+; --- Risk / position sizing ---
+InpLotMode=1
+InpFixedLot=0.1
+InpRiskPercent=0.5
+InpMaxRiskMoney=50.0
+InpSLBufferPoints=100
+InpTPMode=0
+InpRewardRatio=2.0
+InpMinRewardRatio=1.0
+; --- Trade management ---
+InpTimeStopMinutes=10
+InpMinProfitPoints=20
+InpBreakevenMoney=10.0
+InpBreakevenBufferPoints=10
+InpUseTrailing=true
+InpTrailMode=0
+InpTrailMoneyActivate=10.0
+InpTrailMoneyDistance=10.0
+InpTrailActivatePoints=150
+InpTrailDistancePoints=100
+InpTrailStepPoints=20
+InpUsePartialTP=true
+InpPartialAtRR=1.0
+InpPartialPercent=50.0
+; --- Guards ---
+InpMaxTradesPerDay=2
+InpMaxLossesPerDay=2
+InpCloseTerminalOnMaxLoss=false
+InpDailyProfitTarget=100.0
+InpMaxDailyLoss=100.0
+InpSessionCloseHourET=12
+InpSessionCloseMinET=30
+InpSkipMonday=true
+InpSkipFriday=true
+InpMaxSpreadPoints=60
+InpSlippagePoints=20
+InpMagicNumber=778899
+InpComment=GoldSweepEA

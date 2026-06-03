@@ -54,7 +54,9 @@ model.
    (MetaTrader 5 → **File → Open Data Folder → MQL5 → Experts**).
 2. Open it in **MetaEditor** and press **Compile** (F7). There should be no errors.
 3. In MT5, open a **XAUUSD M5** chart and drag the EA onto it.
-4. Enable **Algo Trading** (the toolbar button) and allow live trading in the
+4. In the inputs dialog click **Load** and pick **`GoldSweepEA.set`** for the
+   default settings (then calibrate `InpServerToETOffset`).
+5. Enable **Algo Trading** (the toolbar button) and allow live trading in the
    EA dialog.
 
 > The EA trades whatever symbol the chart uses (`_Symbol`), so attach it to your
