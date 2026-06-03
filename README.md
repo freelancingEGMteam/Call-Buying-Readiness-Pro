@@ -24,7 +24,8 @@ model.
    - Sweep of **Asia high** → **SELL**
    - Sweep of **Asia low** → **BUY**
 6. **10-minute time-stop**: if the trade isn't in profit after 10 minutes, it's
-   closed. A **trailing stop** manages winners.
+   closed. Once floating profit reaches **$10** the stop jumps to **breakeven**,
+   and a **trailing stop** rides the rest of the move.
 7. **PDH / PDL** (previous **D1** high/low) are used as **take-profit targets** —
    these are separate from the Asia range, which is only the entry trigger.
 
@@ -82,7 +83,9 @@ Adjust **`InpServerToETOffset`** until the printed ET matches actual New York ti
 | `InpMaxRiskMoney` | **Hard $ risk cap per trade (default 50)** |
 | `InpTPMode` | `TP_PDH_PDL` (target prev-day levels) or `TP_FIXED_RR` |
 | `InpTimeStopMinutes` | Close-if-not-profitable timer (default 10) |
-| `InpUseTrailing` + trail points | Trailing-stop behaviour |
+| `InpBreakevenMoney` | Move SL to breakeven once floating profit hits this $ (default 10) |
+| `InpBreakevenBufferPoints` | Points locked beyond entry at breakeven (covers spread) |
+| `InpUseTrailing` + trail points | Trailing-stop behaviour (continues after breakeven) |
 | `InpMaxTradesPerDay`, `InpMaxSpreadPoints` | Guards |
 
 > **Points note:** values are in broker *points*. On a 2-digit gold feed,

@@ -65,6 +65,8 @@ input double InpRewardRatio         = 2.0;   // Reward:risk (TP_FIXED_RR / PDL f
 input group "=== Trade management ==="
 input int    InpTimeStopMinutes     = 10;    // Close if not in profit after N minutes
 input int    InpMinProfitPoints     = 20;    // "In profit" threshold for the time-stop (points)
+input double InpBreakevenMoney      = 10.0;  // Move SL to breakeven once floating profit reaches this ($)
+input int    InpBreakevenBufferPoints = 10;  // Points locked beyond entry at breakeven (covers spread; 0 = exact)
 input bool   InpUseTrailing         = true;  // Enable trailing stop
 input int    InpTrailActivatePoints = 150;   // Profit (points) before trailing engages
 input int    InpTrailDistancePoints = 100;   // Trail distance behind price (points)
@@ -398,7 +400,31 @@ void ManageOpenPosition()
       }
    }
 
-   // ----- trailing stop -----
+   // ----- move to breakeven once floating profit hits the $ threshold -----
+   if(InpBreakevenMoney > 0.0 && PositionGetDouble(POSITION_PROFIT) >= InpBreakevenMoney)
+   {
+      double buf = InpBreakevenBufferPoints * g_point;
+      if(type == POSITION_TYPE_BUY)
+      {
+         double be = open + buf;
+         if((sl < be - 1e-8) && (bid - be >= g_stopsLevel))
+         {
+            if(trade.PositionModify(_Symbol, NormalizeDouble(be, g_digits), tp))
+               sl = be;   // keep local copy in sync for the trailing block below
+         }
+      }
+      else // SELL
+      {
+         double be = open - buf;
+         if((sl == 0.0 || sl > be + 1e-8) && (be - ask >= g_stopsLevel))
+         {
+            if(trade.PositionModify(_Symbol, NormalizeDouble(be, g_digits), tp))
+               sl = be;
+         }
+      }
+   }
+
+   // ----- trailing stop (continues from breakeven) -----
    if(!InpUseTrailing) return;
 
    if(type == POSITION_TYPE_BUY)
