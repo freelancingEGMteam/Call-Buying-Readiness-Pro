@@ -8,7 +8,7 @@
 //|    3. NY morning SWEEPS the Asia high (or low) by a small amount. |
 //|    4. Price shifts market structure (MSS) back the other way.     |
 //|    5. Enter the reversal on high (tick) volume.                   |
-//|    6. 10-minute time-stop, then a trailing stop manages the trade.|
+//|    6. 20-minute time-stop, then a trailing stop manages the trade.|
 //|    PDH/PDL (previous D1 high/low) are used as TP targets.         |
 //|                                                                  |
 //|  NOTE: Spot gold has no real traded volume - the "volume" filter  |
@@ -64,7 +64,7 @@ input double InpRewardRatio         = 2.0;   // Reward:risk (TP_FIXED_RR / PDL f
 input double InpMinRewardRatio      = 1.0;   // Skip the setup if TP gives less than this reward:risk
 
 input group "=== Trade management ==="
-input int    InpTimeStopMinutes     = 10;    // Close if not in profit after N minutes
+input int    InpTimeStopMinutes     = 20;    // Close if not in profit after N minutes
 input int    InpMinProfitPoints     = 20;    // "In profit" threshold for the time-stop (points)
 input double InpBreakevenMoney      = 10.0;  // Move SL to breakeven once floating profit reaches this ($)
 input int    InpBreakevenBufferPoints = 10;  // Points locked beyond entry at breakeven (covers spread; 0 = exact)
